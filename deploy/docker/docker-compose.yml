@@ -20,7 +20,7 @@ services:
       retries: 5
 
   traccar:
-    image: traccar/traccar@sha256:dc73ac1ac1388f97e3259dbbea3bd09d90dccd2df391466ef51826ac591a33f9
+    image: traccar/traccar:6.6
     container_name: ft_traccar
     restart: unless-stopped
     depends_on:
@@ -30,8 +30,8 @@ services:
       - ../traccar/traccar.xml:/opt/traccar/conf/traccar.xml:ro
       - traccar_logs:/opt/traccar/logs
     ports:
-      - "127.0.0.1:8082:8082"
-      - "127.0.0.1:5055:5055"
+      - "8082:8082"
+      - "5055:5055"
 
   relay:
     image: ft_relay:latest
