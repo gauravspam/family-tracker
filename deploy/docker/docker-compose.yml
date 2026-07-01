@@ -1,0 +1,50 @@
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: ft_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "hSy1ht9ZAxCHRjA4AlyYsbtex57PrHZJKMTPw1lCS0s="
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  traccar:
+    image: traccar/traccar@sha256:dc73ac1ac1388f97e3259dbbea3bd09d90dccd2df391466ef51826ac591a33f9
+    container_name: ft_traccar
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../traccar/traccar.xml:/opt/traccar/conf/traccar.xml:ro
+      - traccar_logs:/opt/traccar/logs
+    ports:
+      - "127.0.0.1:8082:8082"
+      - "127.0.0.1:5055:5055"
+
+  relay:
+    image: ft_relay:latest
+    container_name: ft_relay
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../../.env.relay
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  postgres_data:
+  traccar_logs:
