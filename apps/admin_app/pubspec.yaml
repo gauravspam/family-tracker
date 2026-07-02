@@ -1,0 +1,44 @@
+name: admin_app
+description: Family Tracker Admin App
+publish_to: none
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  tracker_core:
+    path: ../../packages/tracker_core
+
+  # Networking
+  dio: ^5.5.0
+  web_socket_channel: ^3.0.1
+
+  # Storage
+  flutter_secure_storage: ^9.2.4
+
+  # Map
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
+  # State
+  provider: ^6.1.2
+
+  # Push notifications
+  firebase_core: ^3.13.0
+  firebase_messaging: ^15.2.6
+
+  # Utility
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
