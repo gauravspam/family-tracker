@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.tasks.await
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -230,10 +232,14 @@ class MainActivity : AppCompatActivity() {
 
             val error = withContext(Dispatchers.IO) {
                 try {
+                    val fcmToken = fetchFcmToken()
+                    storage.fcmToken = fcmToken
+                    storage.fcmTokenDirty = false
+
                     relay.submitJoin(
                         androidId = androidId,
                         deviceModel = Build.MODEL ?: "android device",
-                        fcmToken = "fcm-not-configured-yet",
+                        fcmToken = fcmToken ?: "no-fcm-token",
                         osVersion = "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
                     )
                     null
@@ -300,6 +306,15 @@ class MainActivity : AppCompatActivity() {
         val fallback = "android-${System.currentTimeMillis().toString(36)}"
         Log.w(tag, "ANDROID_ID unavailable; using fallback id")
         return fallback
+    }
+
+    private suspend fun fetchFcmToken(): String? {
+        return try {
+            FirebaseMessaging.getInstance().token.await()
+        } catch (e: Exception) {
+            Log.w(tag, "FCM token fetch failed", e)
+            null
+        }
     }
 
     // ── Polling ───────────────────────────────────────────────────────

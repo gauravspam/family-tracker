@@ -53,6 +53,17 @@ class Storage(context: Context) {
         get() = securePrefs.getString(KEY_INGEST_TOKEN, null)
         set(v) = securePrefs.edit().putString(KEY_INGEST_TOKEN, v).apply()
 
+    // ── FCM ────────────────────────────────────────────────────────
+
+    var fcmToken: String?
+        get() = prefs.getString(KEY_FCM_TOKEN, null)
+        set(v) = prefs.edit().putString(KEY_FCM_TOKEN, v).apply()
+
+    /** True when the token has been rotated but relay hasn't been told yet. */
+    var fcmTokenDirty: Boolean
+        get() = prefs.getBoolean(KEY_FCM_TOKEN_DIRTY, false)
+        set(v) = prefs.edit().putBoolean(KEY_FCM_TOKEN_DIRTY, v).apply()
+
     companion object {
         private const val PREFS_NAME = "reporter_prefs"
         private const val SECURE_PREFS_NAME = "reporter_secure_prefs"
@@ -63,5 +74,7 @@ class Storage(context: Context) {
         private const val KEY_JOIN_REGISTERED = "join_registered"
         private const val KEY_INGEST_URL = "ingest_url"
         private const val KEY_INGEST_TOKEN = "ingest_token"
+        private const val KEY_FCM_TOKEN = "fcm_token"
+        private const val KEY_FCM_TOKEN_DIRTY = "fcm_token_dirty"
     }
 }

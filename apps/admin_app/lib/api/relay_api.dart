@@ -72,7 +72,12 @@ class RelayApi {
     _checkStatus(r);
   }
 
-  Future<void> triggerLive({
+  Future<void> stopLive(int traccarDeviceId) async {
+    final r = await _dio.post('/admin/idle/$traccarDeviceId');
+    _checkStatus(r);
+  }
+
+    Future<void> triggerLive({
     required int traccarDeviceId,
     required DateTime expiresAtUtc,
   }) async {

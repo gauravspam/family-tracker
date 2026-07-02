@@ -142,6 +142,33 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     }
   }
 
+  Future<void> _stopLive() async {
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final relay = context.read<RelayApi>();
+    final devices = context.read<DevicesController>();
+
+    try {
+      await relay.stopLive(view.device.id);
+      await devices.refresh();
+      if (!mounted) return;
+      navigator.pop();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Live mode stopped')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Stop live failed: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
   Future<void> _remove() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -299,14 +326,24 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _busy ? null : _triggerLive,
-              icon: const Icon(Icons.gps_fixed),
-              label: const Text('Track Live'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-            ),
+            child: view.isLive
+                ? FilledButton.icon(
+                    onPressed: _busy ? null : _stopLive,
+                    icon: const Icon(Icons.stop_circle_outlined),
+                    label: const Text('Stop Live'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.red.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  )
+                : FilledButton.icon(
+                    onPressed: _busy ? null : _triggerLive,
+                    icon: const Icon(Icons.gps_fixed),
+                    label: const Text('Track Live'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
           ),
           const SizedBox(height: 8),
           Row(

@@ -54,6 +54,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Delete("/admin/device-by-traccar/{traccarId}", h.removeByTraccarId)
 		r.Put("/admin/rename/{traccarId}", h.renameByTraccarId)
 		r.Post("/admin/live/{deviceId}", h.live)
+		r.Post("/admin/idle/{deviceId}", h.idle)
 		r.Post("/admin/fcm-token", h.registerAdminFCM)
 	})
 
@@ -570,4 +571,38 @@ func jsonErr(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// ── POST /admin/idle/{deviceId} ──
+
+func (h *Handler) idle(w http.ResponseWriter, r *http.Request) {
+        tid, err := strconv.ParseInt(chi.URLParam(r, "deviceId"), 10, 64)
+        if err != nil {
+                jsonErr(w, 400, "invalid deviceId")
+                return
+        }
+        ctx := r.Context()
+
+        meta, err := h.st.GetReporterMetaByTraccarID(ctx, tid)
+        if err != nil {
+                if errors.Is(err, store.ErrNoRows) {
+                        jsonErr(w, 404, "device not found")
+                        return
+                }
+                jsonErr(w, 500, "internal error")
+                return
+        }
+
+        if err := h.st.SetReporterMode(ctx, tid, store.ModeIdle, nil); err != nil {
+                jsonErr(w, 500, "internal error")
+                return
+        }
+
+        if err := h.fc.SendData(ctx, meta.FCMToken, map[string]string{
+                "command": "idle_mode",
+        }); err != nil {
+                log.Printf("FCM idle_mode: %v (non-fatal)", err)
+        }
+        _ = h.st.RecordCommand(ctx, tid, "idle_mode")
+        w.WriteHeader(204)
 }

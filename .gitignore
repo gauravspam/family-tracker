@@ -40,3 +40,9 @@ services/notify_relay/*.exe
 Thumbs.db
 *.swp
 *~
+# Firebase / FCM secrets — never commit
+google-services.json
+**/google-services.json
+fcm-service-account.json
+**/fcm-service-account.json
+secrets/
