@@ -7,6 +7,7 @@ import '../auth/auth_controller.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
 import '../ws/traccar_socket.dart';
+import 'device_detail_sheet.dart';
 
 class DevicesScreen extends StatelessWidget {
   const DevicesScreen({super.key});
@@ -133,11 +134,7 @@ class _DeviceTile extends StatelessWidget {
       title: Text(view.displayName),
       subtitle: Text(subtitleParts.join(' · ')),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Device detail coming in Phase 5D')),
-        );
-      },
+      onTap: () => showDeviceDetailSheet(context, view),
     );
   }
 

@@ -100,7 +100,7 @@ class MotionEstimator {
 
     // Linearly decay speed so the marker eases to a stop at the window edge.
     // effective speed factor: 1.0 at t=0, 0.0 at t=1
-    final decay = 1.0 - t;
+    // (decay is folded into the integral below)
 
     // Integral of (speed * decay) over [0, elapsed]:
     //   distance = speed * elapsed * (1 - t/2)

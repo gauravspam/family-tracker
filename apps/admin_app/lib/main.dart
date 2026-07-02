@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'api/relay_api.dart';
 import 'api/traccar_api.dart';
 import 'auth/auth_controller.dart';
 import 'auth/session_storage.dart';
@@ -11,6 +12,7 @@ import 'config.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/devices_controller.dart';
+import 'state/pending_controller.dart';
 import 'ws/traccar_socket.dart';
 
 void main() {
@@ -28,6 +30,10 @@ class AdminApp extends StatelessWidget {
       baseUrl: AppConfig.traccarBaseUrl,
       storage: sessionStorage,
     );
+    final relayApi = RelayApi(
+      baseUrl: AppConfig.relayBaseUrl,
+      storage: sessionStorage,
+    );
     final socket = TraccarSocket(
       wsUrl: AppConfig.traccarWsUrl,
       storage: sessionStorage,
@@ -37,23 +43,20 @@ class AdminApp extends StatelessWidget {
       providers: [
         Provider<SessionStorage>.value(value: sessionStorage),
         Provider<TraccarApi>.value(value: traccarApi),
+        Provider<RelayApi>.value(value: relayApi),
         ChangeNotifierProvider(
           create: (_) => AuthController(
             storage: sessionStorage,
             traccar: TraccarAuth(AppConfig.traccarBaseUrl),
           ),
         ),
-        ChangeNotifierProvider(
-          create: (_) => DevicesController(traccarApi),
-        ),
+        ChangeNotifierProvider(create: (_) => DevicesController(traccarApi)),
+        ChangeNotifierProvider(create: (_) => PendingController(relayApi)),
         ChangeNotifierProvider<TraccarSocket>.value(value: socket),
       ],
       child: MaterialApp(
         title: 'Family Tracker Admin',
-        theme: ThemeData(
-          colorSchemeSeed: Colors.blue,
-          useMaterial3: true,
-        ),
+        theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
         home: const _RootRouter(),
       ),
     );
@@ -94,24 +97,25 @@ class _RootRouterState extends State<_RootRouter> {
   void _wireLiveUpdates(AuthController auth) {
     final socket = context.read<TraccarSocket>();
     final devices = context.read<DevicesController>();
+    final pending = context.read<PendingController>();
     final authController = context.read<AuthController>();
 
     if (auth.phase == AuthPhase.loggedIn && !_wired) {
       _wired = true;
 
-      _posSub = socket.positions.listen((positions) {
-        devices.applyLivePositions(positions);
-      });
+      _posSub = socket.positions.listen(devices.applyLivePositions);
+      _unauthSub = socket.unauthorized.listen((_) => authController.logout());
 
-      _unauthSub = socket.unauthorized.listen((_) {
-        authController.logout();
-      });
-
-      // Initial fetch + connect
       Future.microtask(() async {
         try {
           await devices.refresh();
         } on TraccarUnauthorized {
+          await authController.logout();
+          return;
+        }
+        try {
+          await pending.refresh();
+        } on RelayUnauthorized {
           await authController.logout();
           return;
         }

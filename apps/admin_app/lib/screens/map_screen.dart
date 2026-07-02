@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../map/motion_estimator.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
+import 'device_detail_sheet.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -34,8 +35,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   }
 
   void _onTick(Duration _) {
-    // Trigger a repaint at ~60 FPS.
-    // Actual position is computed inside build() using DateTime.now().
     if (mounted) setState(() {});
   }
 
@@ -44,13 +43,10 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       if (v.position == null) continue;
       final id = v.device.id;
       final est = _estimators.putIfAbsent(id, MotionEstimator.new);
-
-      // Only submit if this is a genuinely new anchor
       if (est.anchor == null || v.position!.fixTime.isAfter(est.anchor!.fixTime)) {
         est.submit(v.position!);
       }
     }
-    // Drop estimators for devices that no longer exist
     final activeIds = devices.map((d) => d.device.id).toSet();
     _estimators.removeWhere((id, _) => !activeIds.contains(id));
   }
@@ -134,7 +130,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       width: 40,
       height: 40,
       child: GestureDetector(
-        onTap: () => _showDeviceCallout(context, v),
+        onTap: () => showDeviceDetailSheet(context, v),
         child: Container(
           decoration: BoxDecoration(
             color: v.isOnline ? Colors.green : Colors.grey,
@@ -146,20 +142,6 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
           ),
           child: const Icon(Icons.person, color: Colors.white, size: 20),
         ),
-      ),
-    );
-  }
-
-  void _showDeviceCallout(BuildContext context, DeviceView v) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '${v.displayName} · '
-          '${v.position!.latitude.toStringAsFixed(5)}, '
-          '${v.position!.longitude.toStringAsFixed(5)}',
-        ),
-        duration: const Duration(seconds: 3),
       ),
     );
   }

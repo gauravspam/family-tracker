@@ -46,6 +46,15 @@ type ReporterMeta struct {
 	IngestToken     *string
 }
 
+/// ApprovedDeviceRow is the join view returned by ListApprovedDevices.
+type ApprovedDeviceRow struct {
+	PendingID       int64
+	TraccarDeviceID int64
+	AndroidID       string
+	DeviceModel     string
+	Mode            TrackingMode
+}
+
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -101,6 +110,17 @@ func (s *Store) GetPendingDeviceByAndroidID(ctx context.Context, androidID strin
 	return d, err
 }
 
+func (s *Store) GetPendingDeviceByTraccarID(ctx context.Context, traccarID int64) (PendingDevice, error) {
+	var d PendingDevice
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, android_id, device_model, fcm_token, app_version,
+		       os_version, status, traccar_device_id, created_at
+		FROM pending_devices WHERE traccar_device_id = $1`, traccarID,
+	).Scan(&d.ID, &d.AndroidID, &d.DeviceModel, &d.FCMToken,
+		&d.AppVersion, &d.OSVersion, &d.Status, &d.TraccarID, &d.CreatedAt)
+	return d, err
+}
+
 func (s *Store) ListPending(ctx context.Context) ([]PendingDevice, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, android_id, device_model, fcm_token, app_version,
@@ -136,6 +156,38 @@ func (s *Store) SetPendingStatus(ctx context.Context, id int64, status ApprovalS
 		UPDATE pending_devices SET status = $2, updated_at = now()
 		WHERE id = $1`, id, status)
 	return err
+}
+
+// ── Approved-devices index ──
+
+func (s *Store) ListApprovedDevices(ctx context.Context) ([]ApprovedDeviceRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT pd.id, pd.traccar_device_id, pd.android_id, pd.device_model,
+		       rdm.mode
+		FROM pending_devices pd
+		JOIN reporter_device_meta rdm
+		  ON rdm.traccar_device_id = pd.traccar_device_id
+		WHERE pd.status = 'approved'
+		  AND rdm.state = 'approved'
+		ORDER BY pd.created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ApprovedDeviceRow
+	for rows.Next() {
+		var r ApprovedDeviceRow
+		var traccarID *int64
+		if err := rows.Scan(&r.PendingID, &traccarID, &r.AndroidID,
+			&r.DeviceModel, &r.Mode); err != nil {
+			return nil, err
+		}
+		if traccarID != nil {
+			r.TraccarDeviceID = *traccarID
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ── Reporter Meta ──
@@ -224,5 +276,4 @@ func (s *Store) AllAdminTokens(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ErrNoRows re-exports pgx sentinel for callers
 var ErrNoRows = pgx.ErrNoRows

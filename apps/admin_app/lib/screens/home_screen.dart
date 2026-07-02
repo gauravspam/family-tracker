@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../api/relay_api.dart';
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../state/devices_controller.dart';
+import '../state/pending_controller.dart';
 import 'devices_screen.dart';
 import 'map_screen.dart';
+import 'pending_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,20 +21,28 @@ class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
 
   Future<void> _refresh() async {
+    // Capture before any await so we don't reuse BuildContext across gaps.
+    final auth = context.read<AuthController>();
+    final devices = context.read<DevicesController>();
+    final pending = context.read<PendingController>();
+
     try {
-      await context.read<DevicesController>().refresh();
+      await devices.refresh();
+      await pending.refresh();
     } on TraccarUnauthorized {
-      if (mounted) {
-        await context.read<AuthController>().logout();
-      }
+      await auth.logout();
+    } on RelayUnauthorized {
+      await auth.logout();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final titles = ['Devices', 'Map', 'Pending'];
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_tab == 0 ? 'Devices' : 'Map'),
+        title: Text(titles[_tab]),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -52,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: const [
           DevicesScreen(),
           MapScreen(),
+          PendingScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -60,8 +72,27 @@ class _HomeScreenState extends State<HomeScreen> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.list), label: 'Devices'),
           NavigationDestination(icon: Icon(Icons.map), label: 'Map'),
+          NavigationDestination(icon: _PendingIcon(), label: 'Pending'),
         ],
       ),
+    );
+  }
+}
+
+class _PendingIcon extends StatelessWidget {
+  const _PendingIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<PendingController>(
+      builder: (context, controller, _) {
+        final count = controller.items.length;
+        if (count == 0) return const Icon(Icons.inbox);
+        return Badge(
+          label: Text('$count'),
+          child: const Icon(Icons.inbox),
+        );
+      },
     );
   }
 }

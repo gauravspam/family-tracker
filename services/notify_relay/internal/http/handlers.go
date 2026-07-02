@@ -1,6 +1,7 @@
 package relayhttp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -22,7 +23,7 @@ import (
 type Config struct {
 	AdminToken    string
 	WebhookSecret string
-	IngestURL     string // e.g. https://yourdomain.com:5055
+	IngestURL     string
 }
 
 type Handler struct {
@@ -46,8 +47,11 @@ func (h *Handler) Routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(h.adminAuth)
 		r.Get("/admin/pending", h.listPending)
+		r.Get("/admin/devices", h.listApprovedDevices)
 		r.Post("/admin/approve/{pendingId}", h.approve)
+		r.Post("/admin/reject/{pendingId}", h.reject)
 		r.Post("/admin/remove/{id}", h.remove)
+		r.Delete("/admin/device-by-traccar/{traccarId}", h.removeByTraccarId)
 		r.Post("/admin/live/{deviceId}", h.live)
 		r.Post("/admin/fcm-token", h.registerAdminFCM)
 	})
@@ -122,7 +126,6 @@ func (h *Handler) deviceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check reporter_device_meta first (approved devices)
 	meta, err := h.st.GetReporterMetaByAndroidID(r.Context(), aid)
 	if err == nil {
 		resp := map[string]any{"status": string(meta.State)}
@@ -138,7 +141,6 @@ func (h *Handler) deviceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fall back to pending_devices
 	d, err := h.st.GetPendingDeviceByAndroidID(r.Context(), aid)
 	if err != nil {
 		if errors.Is(err, store.ErrNoRows) {
@@ -182,6 +184,38 @@ func (h *Handler) listPending(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out)
 }
 
+// ── GET /admin/devices ──
+// Approved-device index with the identifiers the admin app needs to call
+// remove/live without maintaining its own mapping between Traccar IDs and
+// relay pending IDs.
+
+func (h *Handler) listApprovedDevices(w http.ResponseWriter, r *http.Request) {
+	list, err := h.st.ListApprovedDevices(r.Context())
+	if err != nil {
+		log.Printf("ListApprovedDevices: %v", err)
+		jsonErr(w, 500, "internal error")
+		return
+	}
+	type item struct {
+		PendingID       int64  `json:"pendingId"`
+		TraccarDeviceID int64  `json:"traccarDeviceId"`
+		AndroidID       string `json:"androidId"`
+		DeviceModel     string `json:"deviceModel"`
+		Mode            string `json:"mode"`
+	}
+	out := make([]item, 0, len(list))
+	for _, d := range list {
+		out = append(out, item{
+			PendingID:       d.PendingID,
+			TraccarDeviceID: d.TraccarDeviceID,
+			AndroidID:       d.AndroidID,
+			DeviceModel:     d.DeviceModel,
+			Mode:            string(d.Mode),
+		})
+	}
+	jsonOK(w, out)
+}
+
 // ── POST /admin/approve/{pendingId} ──
 
 func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +240,6 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate 128-bit ingest token
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		jsonErr(w, 500, "token generation failed")
@@ -214,7 +247,6 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 	}
 	ingestToken := base64.RawURLEncoding.EncodeToString(raw)
 
-	// Create device in Traccar
 	dev, err := h.tc.CreateDevice(ctx, pending.DeviceModel, ingestToken)
 	if err != nil {
 		log.Printf("traccar.CreateDevice: %v", err)
@@ -222,7 +254,6 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update pending record
 	if err := h.st.ApprovePendingDevice(ctx, pid, dev.ID); err != nil {
 		log.Printf("ApprovePendingDevice: %v", err)
 		_ = h.tc.DeleteDevice(ctx, dev.ID)
@@ -230,7 +261,6 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert reporter meta with ingest token
 	tokenStr := ingestToken
 	if err := h.st.InsertReporterMeta(ctx, store.ReporterMeta{
 		TraccarDeviceID: dev.ID,
@@ -241,7 +271,6 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		log.Printf("InsertReporterMeta: %v", err)
 	}
 
-	// Send FCM approved command
 	if err := h.fc.SendData(ctx, pending.FCMToken, map[string]string{
 		"command":     "approved",
 		"ingestToken": ingestToken,
@@ -255,6 +284,37 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		"traccarDeviceId": dev.ID,
 		"androidId":       pending.AndroidID,
 	})
+}
+
+// ── POST /admin/reject/{pendingId} ──
+
+func (h *Handler) reject(w http.ResponseWriter, r *http.Request) {
+	pid, err := strconv.ParseInt(chi.URLParam(r, "pendingId"), 10, 64)
+	if err != nil {
+		jsonErr(w, 400, "invalid pendingId")
+		return
+	}
+	ctx := r.Context()
+
+	pending, err := h.st.GetPendingDevice(ctx, pid)
+	if err != nil {
+		if errors.Is(err, store.ErrNoRows) {
+			jsonErr(w, 404, "not found")
+			return
+		}
+		jsonErr(w, 500, "internal error")
+		return
+	}
+	if pending.Status != store.StatusPending {
+		jsonErr(w, 409, fmt.Sprintf("status is %s", pending.Status))
+		return
+	}
+
+	if err := h.st.SetPendingStatus(ctx, pid, store.StatusRemoved); err != nil {
+		jsonErr(w, 500, "internal error")
+		return
+	}
+	w.WriteHeader(204)
 }
 
 // ── POST /admin/remove/{id} ──
@@ -276,15 +336,38 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "internal error")
 		return
 	}
+	h.performRemoval(ctx, w, pending)
+}
 
-	// Step 1: FCM removed (best-effort)
+// ── DELETE /admin/device-by-traccar/{traccarId} ──
+
+func (h *Handler) removeByTraccarId(w http.ResponseWriter, r *http.Request) {
+	tid, err := strconv.ParseInt(chi.URLParam(r, "traccarId"), 10, 64)
+	if err != nil {
+		jsonErr(w, 400, "invalid traccarId")
+		return
+	}
+	ctx := r.Context()
+
+	pending, err := h.st.GetPendingDeviceByTraccarID(ctx, tid)
+	if err != nil {
+		if errors.Is(err, store.ErrNoRows) {
+			jsonErr(w, 404, "not found")
+			return
+		}
+		jsonErr(w, 500, "internal error")
+		return
+	}
+	h.performRemoval(ctx, w, pending)
+}
+
+func (h *Handler) performRemoval(ctx context.Context, w http.ResponseWriter, pending store.PendingDevice) {
 	if err := h.fc.SendData(ctx, pending.FCMToken, map[string]string{
 		"command": "removed",
 	}); err != nil {
 		log.Printf("FCM removed: %v (non-fatal)", err)
 	}
 
-	// Step 2: Delete from Traccar (authoritative)
 	if pending.TraccarID != nil {
 		if err := h.tc.DeleteDevice(ctx, *pending.TraccarID); err != nil {
 			log.Printf("traccar.DeleteDevice: %v", err)
@@ -294,7 +377,7 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 		_ = h.st.SetReporterRemoved(ctx, *pending.TraccarID)
 	}
 
-	_ = h.st.SetPendingStatus(ctx, id, store.StatusRemoved)
+	_ = h.st.SetPendingStatus(ctx, pending.ID, store.StatusRemoved)
 	w.WriteHeader(204)
 }
 
