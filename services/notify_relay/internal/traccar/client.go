@@ -123,3 +123,40 @@ func (c *Client) DeleteDevice(ctx context.Context, id int64) error {
 	}
 	return nil
 }
+
+// RenameDevice fetches the current device, mutates the name, and PUTs it back.
+// Traccar requires the full object on PUT.
+func (c *Client) RenameDevice(ctx context.Context, id int64, newName string) error {
+	getResp, err := c.do(ctx, "GET", fmt.Sprintf("/api/devices?id=%d", id), nil)
+	if err != nil {
+		return err
+	}
+	defer getResp.Body.Close()
+
+	if getResp.StatusCode != 200 {
+		b, _ := io.ReadAll(getResp.Body)
+		return fmt.Errorf("fetch device %d: %s", getResp.StatusCode, b)
+	}
+
+	var list []map[string]any
+	if err := json.NewDecoder(getResp.Body).Decode(&list); err != nil {
+		return fmt.Errorf("decode device list: %w", err)
+	}
+	if len(list) == 0 {
+		return fmt.Errorf("device %d not found", id)
+	}
+
+	obj := list[0]
+	obj["name"] = newName
+
+	putResp, err := c.do(ctx, "PUT", fmt.Sprintf("/api/devices/%d", id), obj)
+	if err != nil {
+		return err
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != 200 {
+		b, _ := io.ReadAll(putResp.Body)
+		return fmt.Errorf("rename device %d: %s", putResp.StatusCode, b)
+	}
+	return nil
+}

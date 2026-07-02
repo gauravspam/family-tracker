@@ -31,11 +31,15 @@ class _PendingScreenState extends State<PendingScreen> {
   }
 
   Future<void> _approve(PendingDevice d) async {
+    final name = await _askForName(d.deviceModel);
+    if (name == null) return; // user cancelled
+    if (!mounted) return;
+
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await context.read<PendingController>().approve(d.id);
+      await context.read<PendingController>().approve(d.id, name: name);
       messenger.showSnackBar(
-        SnackBar(content: Text('Approved ${d.deviceModel}')),
+        SnackBar(content: Text('Approved as "$name"')),
       );
     } catch (e) {
       messenger.showSnackBar(
@@ -47,10 +51,58 @@ class _PendingScreenState extends State<PendingScreen> {
     }
   }
 
+  Future<String?> _askForName(String suggested) async {
+    final controller = TextEditingController(text: suggested);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Name this device'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Give this device a friendly name so you can tell it apart from others.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Device name',
+                hintText: "e.g. Dad's Phone",
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (v) {
+                final trimmed = v.trim();
+                if (trimmed.isNotEmpty) Navigator.pop(ctx, trimmed);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmed = controller.text.trim();
+              if (trimmed.isEmpty) return;
+              Navigator.pop(ctx, trimmed);
+            },
+            child: const Text('Approve'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _reject(PendingDevice d) async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Reject device?'),
         content: Text(
           'Reject request from ${d.deviceModel}?\n\n'
@@ -58,12 +110,12 @@ class _PendingScreenState extends State<PendingScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Reject'),
           ),
         ],
@@ -176,13 +228,6 @@ class _PendingTile extends StatelessWidget {
                     Text(
                       'Requested ${DateFormat.yMd().add_Hm().format(device.createdAt.toLocal())}',
                       style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'ID: ${device.androidId}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey,
-                          ),
                     ),
                   ],
                 ),

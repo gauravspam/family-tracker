@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../api/relay_api.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 Future<void> showDeviceDetailSheet(
   BuildContext context,
@@ -27,19 +28,93 @@ class _DeviceDetailSheet extends StatefulWidget {
 
 class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   bool _busy = false;
+  late String _displayName;
 
   DeviceView get view => widget.view;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayName = view.displayName;
+  }
+
+  Future<void> _rename() async {
+    final controller = TextEditingController(text: _displayName);
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename device'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Device name',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) {
+            final t = v.trim();
+            if (t.isNotEmpty) Navigator.pop(ctx, t);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final t = controller.text.trim();
+              if (t.isEmpty) return;
+              Navigator.pop(ctx, t);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newName == null || newName == _displayName) return;
+    if (!mounted) return;
+
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final relay = context.read<RelayApi>();
+    final devices = context.read<DevicesController>();
+
+    try {
+      await relay.renameByTraccarId(view.device.id, newName);
+      await devices.refresh();
+      if (!mounted) return;
+      setState(() {
+        _displayName = newName;
+        _busy = false;
+      });
+      messenger.showSnackBar(
+        SnackBar(content: Text('Renamed to "$newName"')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Rename failed: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
 
   Future<void> _triggerLive() async {
     final minutes = await showDialog<int>(
       context: context,
-      builder: (context) => const _LiveDurationDialog(),
+      builder: (ctx) => const _LiveDurationDialog(),
     );
     if (minutes == null) return;
     if (!mounted) return;
 
     setState(() => _busy = true);
-
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final relay = context.read<RelayApi>();
@@ -70,20 +145,20 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   Future<void> _remove() async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Remove device?'),
         content: Text(
-          'Removing ${view.displayName} will stop tracking it, invalidate its ingest token, '
+          'Removing $_displayName will stop tracking it, invalidate its ingest token, '
           'and delete it from Traccar. This cannot be undone.',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Remove'),
           ),
         ],
@@ -93,7 +168,6 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     if (!mounted) return;
 
     setState(() => _busy = true);
-
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final relay = context.read<RelayApi>();
@@ -105,7 +179,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(
-        SnackBar(content: Text('Removed ${view.displayName}')),
+        SnackBar(content: Text('Removed $_displayName')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -113,6 +187,35 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
       messenger.showSnackBar(
         SnackBar(
           content: Text('Remove failed: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _openDirections() async {
+    final p = view.position;
+    if (p == null) return;
+
+    // geo: URI is resolved by the system to whatever nav app the user prefers
+    // (Google Maps, Waze, OsmAnd, etc.).
+    final uri = Uri.parse(
+      'geo:${p.latitude},${p.longitude}?q=${p.latitude},${p.longitude}(${Uri.encodeComponent(_displayName)})',
+    );
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('No maps app found on this device')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Directions failed: $e'),
           backgroundColor: Colors.red.shade700,
         ),
       );
@@ -144,12 +247,21 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  view.displayName,
+                  _displayName,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
+              IconButton(
+                icon: const Icon(Icons.edit_outlined),
+                tooltip: 'Rename',
+                onPressed: _busy ? null : _rename,
+              ),
             ],
           ),
+          if (view.isLive) ...[
+            const SizedBox(height: 8),
+            _LiveBanner(expiresAt: view.liveExpiresAt),
+          ],
           const SizedBox(height: 12),
           _InfoRow(label: 'Traccar ID', value: view.device.id.toString()),
           _InfoRow(
@@ -177,24 +289,43 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
               label: 'Fix time',
               value: p.fixTime.toLocal().toString(),
             ),
+            if (p.batteryPercent != null)
+              _InfoRow(
+                label: 'Battery',
+                value: '${p.batteryPercent}%'
+                    '${p.isLowBattery ? " ⚠️ low" : ""}',
+              ),
           ],
           const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _triggerLive,
+              icon: const Icon(Icons.gps_fixed),
+              label: const Text('Track Live'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed:
+                      (_busy || view.position == null) ? null : _openDirections,
+                  icon: const Icon(Icons.directions),
+                  label: const Text('Directions'),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : _remove,
                   icon: const Icon(Icons.delete_outline),
                   label: const Text('Remove'),
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _busy ? null : _triggerLive,
-                  icon: const Icon(Icons.gps_fixed),
-                  label: const Text('Track Live'),
                 ),
               ),
             ],
@@ -296,6 +427,62 @@ class _LiveDurationDialogState extends State<_LiveDurationDialog> {
           child: const Text('Start'),
         ),
       ],
+    );
+  }
+}
+
+class _LiveBanner extends StatefulWidget {
+  final DateTime? expiresAt;
+  const _LiveBanner({required this.expiresAt});
+
+  @override
+  State<_LiveBanner> createState() => _LiveBannerState();
+}
+
+class _LiveBannerState extends State<_LiveBanner> {
+  @override
+  void initState() {
+    super.initState();
+    Future.doWhile(() async {
+      await Future.delayed(const Duration(seconds: 15));
+      if (!mounted) return false;
+      setState(() {});
+      return mounted;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final exp = widget.expiresAt;
+    String detail = 'Reporter is posting at high frequency.';
+    if (exp != null) {
+      final remaining = exp.difference(DateTime.now());
+      if (remaining.isNegative) {
+        detail = 'Ending shortly...';
+      } else if (remaining.inMinutes >= 1) {
+        detail = 'Ends in ${remaining.inMinutes} min';
+      } else {
+        detail = 'Ends in ${remaining.inSeconds} s';
+      }
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.green.shade600.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.gps_fixed, color: Colors.green.shade700, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'LIVE mode active · $detail',
+              style: TextStyle(color: Colors.green.shade800, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

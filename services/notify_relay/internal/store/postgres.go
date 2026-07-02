@@ -53,6 +53,7 @@ type ApprovedDeviceRow struct {
 	AndroidID       string
 	DeviceModel     string
 	Mode            TrackingMode
+	LiveExpiresAt   *time.Time
 }
 
 type Store struct {
@@ -70,6 +71,10 @@ func (s *Store) Ping(ctx context.Context) error {
 // ── Pending Devices ──
 
 func (s *Store) InsertPendingDevice(ctx context.Context, d PendingDevice) (int64, error) {
+	// Only bump status back to 'pending' when the existing row is not
+	// approved or removed. Approved devices should not be re-registered
+	// via /join; that path is only for new devices and re-attempts before
+	// approval. Removed devices require an admin action to unblock.
 	var id int64
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO pending_devices
@@ -80,7 +85,6 @@ func (s *Store) InsertPendingDevice(ctx context.Context, d PendingDevice) (int64
 			    device_model = EXCLUDED.device_model,
 			    app_version  = EXCLUDED.app_version,
 			    os_version   = EXCLUDED.os_version,
-			    status       = 'pending',
 			    updated_at   = now()
 		RETURNING id`,
 		d.AndroidID, d.DeviceModel, d.FCMToken, d.AppVersion, d.OSVersion,
@@ -163,7 +167,7 @@ func (s *Store) SetPendingStatus(ctx context.Context, id int64, status ApprovalS
 func (s *Store) ListApprovedDevices(ctx context.Context) ([]ApprovedDeviceRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT pd.id, pd.traccar_device_id, pd.android_id, pd.device_model,
-		       rdm.mode
+		       rdm.mode, rdm.live_expires_at
 		FROM pending_devices pd
 		JOIN reporter_device_meta rdm
 		  ON rdm.traccar_device_id = pd.traccar_device_id
@@ -179,7 +183,7 @@ func (s *Store) ListApprovedDevices(ctx context.Context) ([]ApprovedDeviceRow, e
 		var r ApprovedDeviceRow
 		var traccarID *int64
 		if err := rows.Scan(&r.PendingID, &traccarID, &r.AndroidID,
-			&r.DeviceModel, &r.Mode); err != nil {
+			&r.DeviceModel, &r.Mode, &r.LiveExpiresAt); err != nil {
 			return nil, err
 		}
 		if traccarID != nil {
@@ -274,6 +278,19 @@ func (s *Store) AllAdminTokens(ctx context.Context) ([]string, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) DeletePendingDevice(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM pending_devices WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) DeleteReporterMetaByTraccarID(ctx context.Context, traccarID int64) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM reporter_device_meta WHERE traccar_device_id = $1`,
+		traccarID,
+	)
+	return err
 }
 
 var ErrNoRows = pgx.ErrNoRows

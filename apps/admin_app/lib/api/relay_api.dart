@@ -5,7 +5,6 @@ import 'package:tracker_core/tracker_core.dart';
 
 import '../auth/session_storage.dart';
 
-/// Error raised when the relay rejects our admin token.
 class RelayUnauthorized implements Exception {
   @override
   String toString() => 'RelayUnauthorized';
@@ -39,8 +38,18 @@ class RelayApi {
     return list.map(ApprovedDevice.fromJson).toList();
   }
 
-  Future<void> approve(int pendingId) async {
-    final r = await _dio.post('/admin/approve/$pendingId');
+  Future<void> approve(int pendingId, {String? name}) async {
+    final body = <String, dynamic>{};
+    if (name != null && name.trim().isNotEmpty) {
+      body['name'] = name.trim();
+    }
+    final r = await _dio.post(
+      '/admin/approve/$pendingId',
+      data: body.isEmpty ? null : jsonEncode(body),
+      options: body.isEmpty
+          ? null
+          : Options(contentType: Headers.jsonContentType),
+    );
     _checkStatus(r);
   }
 
@@ -49,9 +58,17 @@ class RelayApi {
     _checkStatus(r);
   }
 
-  /// Remove by Traccar device id (uses the convenience endpoint added in 5D).
   Future<void> removeByTraccarId(int traccarId) async {
     final r = await _dio.delete('/admin/device-by-traccar/$traccarId');
+    _checkStatus(r);
+  }
+
+  Future<void> renameByTraccarId(int traccarId, String newName) async {
+    final r = await _dio.put(
+      '/admin/rename/$traccarId',
+      data: jsonEncode({'name': newName.trim()}),
+      options: Options(contentType: Headers.jsonContentType),
+    );
     _checkStatus(r);
   }
 

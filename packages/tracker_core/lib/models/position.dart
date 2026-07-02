@@ -13,6 +13,7 @@ class TraccarPosition {
   final double speed;
   final double course;
   final double accuracy;
+  final Map<String, dynamic> attributes;
 
   const TraccarPosition({
     required this.id,
@@ -29,6 +30,7 @@ class TraccarPosition {
     required this.speed,
     required this.course,
     required this.accuracy,
+    required this.attributes,
   });
 
   factory TraccarPosition.fromJson(Map<String, dynamic> json) {
@@ -47,6 +49,23 @@ class TraccarPosition {
       speed: (json['speed'] as num).toDouble(),
       course: (json['course'] as num).toDouble(),
       accuracy: (json['accuracy'] as num?)?.toDouble() ?? 0,
+      attributes: (json['attributes'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, v),
+          ) ??
+          const {},
     );
+  }
+
+  /// Battery percent 0-100, or null if the reporter didn't send it.
+  int? get batteryPercent {
+    final v = attributes['batteryLevel'];
+    if (v is num) return v.round().clamp(0, 100);
+    return null;
+  }
+
+  /// True when [batteryPercent] is present and below 20%.
+  bool get isLowBattery {
+    final b = batteryPercent;
+    return b != null && b < 20;
   }
 }

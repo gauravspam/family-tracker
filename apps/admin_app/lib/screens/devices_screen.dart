@@ -125,15 +125,43 @@ class _DeviceTile extends StatelessWidget {
       subtitleParts.add('No position yet');
     }
 
+    final low = view.position?.isLowBattery ?? false;
+    final batt = view.position?.batteryPercent;
+
     return ListTile(
       leading: Icon(
         view.isOnline ? Icons.circle : Icons.circle_outlined,
         color: view.isOnline ? Colors.green : Colors.grey,
         size: 14,
       ),
-      title: Text(view.displayName),
+      title: Row(
+        children: [
+          Flexible(child: Text(view.displayName, overflow: TextOverflow.ellipsis)),
+          if (view.isLive) ...[
+            const SizedBox(width: 8),
+            _LiveChip(expiresAt: view.liveExpiresAt),
+          ],
+        ],
+      ),
       subtitle: Text(subtitleParts.join(' · ')),
-      trailing: const Icon(Icons.chevron_right),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (low)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Tooltip(
+                message: 'Low battery ($batt%)',
+                child: const Icon(
+                  Icons.battery_alert,
+                  color: Colors.red,
+                  size: 20,
+                ),
+              ),
+            ),
+          const Icon(Icons.chevron_right),
+        ],
+      ),
       onTap: () => showDeviceDetailSheet(context, view),
     );
   }
@@ -212,6 +240,58 @@ class _ErrorView extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _LiveChip extends StatefulWidget {
+  final DateTime? expiresAt;
+  const _LiveChip({required this.expiresAt});
+
+  @override
+  State<_LiveChip> createState() => _LiveChipState();
+}
+
+class _LiveChipState extends State<_LiveChip> {
+  @override
+  void initState() {
+    super.initState();
+    Future.doWhile(() async {
+      await Future.delayed(const Duration(seconds: 15));
+      if (!mounted) return false;
+      setState(() {});
+      return mounted;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final exp = widget.expiresAt;
+    String label = 'LIVE';
+    if (exp != null) {
+      final remaining = exp.difference(DateTime.now());
+      if (remaining.isNegative) {
+        label = 'LIVE (ending)';
+      } else if (remaining.inMinutes >= 1) {
+        label = 'LIVE ${remaining.inMinutes}m';
+      } else {
+        label = 'LIVE ${remaining.inSeconds}s';
+      }
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.green.shade600,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }

@@ -18,6 +18,8 @@ class OsmAndClient {
     /**
      * Sends a position via OsmAnd HTTP protocol.
      * Traccar returns 200 on success even with an empty body.
+     * Optional [batteryPercent] (0-100) is included as `batt=` so Traccar
+     * stores it in position.attributes.battery.
      */
     fun postPosition(
         ingestUrl: String,
@@ -27,7 +29,9 @@ class OsmAndClient {
         timestampEpochSec: Long,
         accuracyMeters: Float,
         altitudeMeters: Double,
-        speedMs: Float
+        speedMs: Float,
+        courseDeg: Float = 0f,
+        batteryPercent: Int? = null,
     ) {
         val url = buildString {
             append(ingestUrl.trimEnd('/'))
@@ -39,6 +43,10 @@ class OsmAndClient {
             append("&hdop=").append(accuracyMeters)
             append("&altitude=").append(altitudeMeters)
             append("&speed=").append(speedMs)
+            append("&bearing=").append(courseDeg)
+            if (batteryPercent != null) {
+                append("&batt=").append(batteryPercent)
+            }
         }
 
         val req = Request.Builder().url(url).get().build()
@@ -48,7 +56,7 @@ class OsmAndClient {
                 Log.w(tag, "OsmAnd post failed: HTTP ${resp.code}")
                 throw RuntimeException("OsmAnd HTTP ${resp.code}")
             }
-            Log.i(tag, "Posted lat=$latitude lon=$longitude accuracy=$accuracyMeters")
+            Log.i(tag, "Posted lat=$latitude lon=$longitude acc=$accuracyMeters batt=$batteryPercent")
         }
     }
 }

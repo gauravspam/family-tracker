@@ -1,7 +1,9 @@
 package com.familytracker.reporter.ui
 
+import android.annotation.SuppressLint
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -219,13 +221,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun attemptRegistration() {
-        // Prevent parallel attempts
         cancelRegistration()
-
         show(title = "Registering device...", subtitle = "", showSpinner = true)
 
         registerJob = scope.launch {
-            val androidId = getOrGenerateAndroidId()
+            val androidId = getStableDeviceId()
             storage.androidId = androidId
 
             val error = withContext(Dispatchers.IO) {
@@ -271,11 +271,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun getOrGenerateAndroidId(): String {
+    /**
+     * Returns a stable identifier for this device that survives app data
+     * clears and reinstalls. Only changes on factory reset.
+     *
+     * We prefer the value we already stored (in case Android ever changed
+     * ANDROID_ID under us). Only fall back to a generated timestamp if the
+     * platform value is somehow missing.
+     */
+    @SuppressLint("HardwareIds")
+    private fun getStableDeviceId(): String {
         storage.androidId?.let { return it }
-        val fresh = "android-${System.currentTimeMillis().toString(36)}"
-        storage.androidId = fresh
-        return fresh
+
+        val platformId = try {
+            Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (!platformId.isNullOrBlank() && platformId != "9774d56d682e549c") {
+            // Prefix so it's clearly a device id in logs, and to keep the
+            // shape consistent with our historical `android-...` values.
+            return "android-$platformId"
+        }
+
+        // Absolute fallback: some emulators return null or the well-known
+        // buggy value above. Generate a timestamp id and store it.
+        val fallback = "android-${System.currentTimeMillis().toString(36)}"
+        Log.w(tag, "ANDROID_ID unavailable; using fallback id")
+        return fallback
     }
 
     // ── Polling ───────────────────────────────────────────────────────

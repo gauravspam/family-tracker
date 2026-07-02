@@ -50,13 +50,27 @@ class AdminApp extends StatelessWidget {
             traccar: TraccarAuth(AppConfig.traccarBaseUrl),
           ),
         ),
-        ChangeNotifierProvider(create: (_) => DevicesController(traccarApi)),
+        ChangeNotifierProvider(create: (_) => DevicesController(traccarApi, relayApi)),
         ChangeNotifierProvider(create: (_) => PendingController(relayApi)),
         ChangeNotifierProvider<TraccarSocket>.value(value: socket),
       ],
       child: MaterialApp(
         title: 'Family Tracker Admin',
-        theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: Brightness.light,
+          ),
+          useMaterial3: true,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        themeMode: ThemeMode.system,
         home: const _RootRouter(),
       ),
     );

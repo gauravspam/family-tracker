@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
@@ -148,6 +149,9 @@ class LocationForegroundService : Service() {
             return
         }
 
+        val batt = readBatteryLevel()
+        val course = if (loc.hasBearing()) loc.bearing else 0f
+
         scope.launch {
             try {
                 osmand.postPosition(
@@ -158,7 +162,9 @@ class LocationForegroundService : Service() {
                     timestampEpochSec = loc.time / 1000L,
                     accuracyMeters = loc.accuracy,
                     altitudeMeters = if (loc.hasAltitude()) loc.altitude else 0.0,
-                    speedMs = if (loc.hasSpeed()) loc.speed else 0f
+                    speedMs = if (loc.hasSpeed()) loc.speed else 0f,
+                    courseDeg = course,
+                    batteryPercent = batt,
                 )
             } catch (e: Exception) {
                 Log.w(tag, "Post failed", e)
@@ -202,6 +208,17 @@ class LocationForegroundService : Service() {
         }
     }
 
+
+    private fun readBatteryLevel(): Int? {
+        return try {
+            val bm = getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+            if (level in 0..100) level else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // ── Notification ──────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
@@ -230,7 +247,7 @@ class LocationForegroundService : Service() {
 
         val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("Family Tracker")
+            .setContentTitle("Recorder")
             .setContentText(text)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

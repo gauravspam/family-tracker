@@ -36,8 +36,8 @@ class PendingController extends ChangeNotifier {
     }
   }
 
-  Future<void> approve(int pendingId) async {
-    await _api.approve(pendingId);
+  Future<void> approve(int pendingId, {String? name}) async {
+    await _api.approve(pendingId, name: name);
     await refresh();
   }
 

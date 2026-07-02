@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Recording dot (top-right of mic) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M72,36 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+
+    <!-- Mic body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,32
+                          m-8,0
+                          a8,8 0 0,1 16,0
+                          l0,20
+                          a8,8 0 0,1 -16,0
+                          z"/>
+
+    <!-- Mic arc / stand -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:fillColor="#00000000"
+        android:pathData="M38,50
+                          a16,16 0 0,0 32,0"/>
+
+    <!-- Mic stand vertical -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:fillColor="#00000000"
+        android:pathData="M54,66 L54,76"/>
+
+    <!-- Mic base horizontal -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:fillColor="#00000000"
+        android:pathData="M44,76 L64,76"/>
+</vector>
