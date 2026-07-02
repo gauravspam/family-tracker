@@ -1,7 +1,42 @@
-# .env.relay
-# .env
-# *.env
-# deploy/traccar/traccar.xml
-# secrets/
-# *.json
-# !pubspec.json
+# ── Flutter/Dart ────────────────────────────────────
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/pubspec.lock
+
+# ── Kotlin / Gradle / Android ────────────────────────
+.gradle/
+**/.gradle/
+build/
+**/build/
+local.properties
+**/local.properties
+*.iml
+**/*.iml
+.idea/
+**/.idea/
+captures/
+**/captures/
+.kotlin/
+**/.kotlin/
+
+# Specifically ignore everything under the Kotlin reporter build directories
+apps/reporter/.gradle/
+apps/reporter/build/
+apps/reporter/app/build/
+apps/reporter/app/.gradle/
+apps/reporter/app/.kotlin/
+apps/reporter/local.properties
+
+# ── Go ───────────────────────────────────────────────
+services/notify_relay/server
+services/notify_relay/*.exe
+
+# ── Misc ─────────────────────────────────────────────
+.docker/
+.DS_Store
+Thumbs.db
+*.swp
+*~
