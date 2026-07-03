@@ -30,8 +30,10 @@ class PendingController extends ChangeNotifier {
     } on RelayUnauthorized {
       rethrow;
     } catch (e) {
-      _lastError = e.toString();
-      _phase = PendingPhase.error;
+      _lastError = friendlyNetworkError(e);
+      // Preserve previously loaded pending devices on failure so the user
+      // still sees the last-known state during transient network drops.
+      _phase = _items.isEmpty ? PendingPhase.error : PendingPhase.ready;
       notifyListeners();
     }
   }

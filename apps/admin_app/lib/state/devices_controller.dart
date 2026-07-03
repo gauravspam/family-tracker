@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:tracker_core/tracker_core.dart';
 
@@ -15,12 +17,26 @@ class DevicesController extends ChangeNotifier {
   final Map<int, TraccarDevice> _devicesById = {};
   final Map<int, TraccarPosition> _latestPosByDeviceId = {};
   final Map<int, ApprovedDevice> _approvedByTraccarId = {};
+
+  /// Ring buffer of recent positions per Traccar device id.
+  /// Used to draw movement trails on the map.
+  final Map<int, List<TraccarPosition>> _trails = {};
+
+  /// Max positions to keep per device (~50 covers a few minutes of live mode).
+  static const int _trailMaxLength = 50;
+
+  /// Max age of trail positions. Older points are discarded on new arrival.
+  static const Duration _trailMaxAge = Duration(minutes: 30);
   String? _lastError;
 
   DevicesController(this._traccar, this._relay);
 
   DevicesPhase get phase => _phase;
   String? get lastError => _lastError;
+
+  /// Last N positions for [traccarDeviceId], oldest first. Empty if none.
+  List<TraccarPosition> trailFor(int traccarDeviceId) =>
+      List.unmodifiable(_trails[traccarDeviceId] ?? const []);
 
   List<DeviceView> get devices {
     final list = _devicesById.values
@@ -60,6 +76,7 @@ class DevicesController extends ChangeNotifier {
         if (existing == null || p.fixTime.isAfter(existing.fixTime)) {
           _latestPosByDeviceId[p.deviceId] = p;
         }
+        _appendToTrail(p);
       }
 
       _approvedByTraccarId
@@ -73,8 +90,11 @@ class DevicesController extends ChangeNotifier {
     } on RelayUnauthorized {
       rethrow;
     } catch (e) {
-      _lastError = e.toString();
-      _phase = DevicesPhase.error;
+      _lastError = friendlyNetworkError(e);
+      // Keep any previously loaded devices on screen when refresh fails so
+      // the user still sees the last-known state during transient network
+      // hiccups.
+      _phase = _devicesById.isEmpty ? DevicesPhase.error : DevicesPhase.ready;
       notifyListeners();
     }
   }
@@ -89,10 +109,78 @@ class DevicesController extends ChangeNotifier {
           _latestPosByDeviceId[p.deviceId] = p;
           changed = true;
         }
+        _appendToTrail(p);
       } catch (_) {
         // skip malformed
       }
     }
     if (changed) notifyListeners();
   }
+
+  /// Impossible-jump filter: a GPS point that appears >200m from the last
+  /// known point in <5 seconds is almost always a glitch or test-data reset.
+  static const double _maxRealisticSpeedMs = 200 / 5; // 40 m/s ≈ 144 km/h
+
+  void _appendToTrail(TraccarPosition p) {
+    final list = _trails.putIfAbsent(p.deviceId, () => []);
+
+    // De-dupe by id (WebSocket + poll can both deliver the same point)
+    if (list.isNotEmpty && list.last.id == p.id) return;
+
+    // Reject impossible jumps that suggest a GPS glitch or a test-data reset.
+    if (list.isNotEmpty) {
+      final prev = list.last;
+      final dt = p.fixTime.difference(prev.fixTime).inMilliseconds / 1000.0;
+      if (dt > 0) {
+        final meters = _haversine(
+          prev.latitude, prev.longitude,
+          p.latitude, p.longitude,
+        );
+        final impliedSpeed = meters / dt;
+        if (impliedSpeed > _maxRealisticSpeedMs) {
+          // Silently drop the impossible point from the trail.
+          // The latest-position map is unaffected — the marker still moves,
+          // it's just the trail line that omits this outlier.
+          return;
+        }
+      }
+    }
+
+    list.add(p);
+
+    // Trim by age
+    final cutoff = DateTime.now().subtract(_trailMaxAge);
+    while (list.isNotEmpty && list.first.fixTime.isBefore(cutoff)) {
+      list.removeAt(0);
+    }
+    // Trim by length
+    while (list.length > _trailMaxLength) {
+      list.removeAt(0);
+    }
+  }
+
+  /// Removes all stored trail points for the given Traccar device id,
+  /// or all devices when [traccarDeviceId] is null.
+  void clearTrail([int? traccarDeviceId]) {
+    if (traccarDeviceId == null) {
+      _trails.clear();
+    } else {
+      _trails.remove(traccarDeviceId);
+    }
+    notifyListeners();
+  }
+
+  /// Haversine distance in metres between two lat/lon pairs.
+  double _haversine(double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371000.0;
+    final dLat = _rad(lat2 - lat1);
+    final dLon = _rad(lon2 - lon1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_rad(lat1)) * math.cos(_rad(lat2)) *
+            math.sin(dLon / 2) * math.sin(dLon / 2);
+    final c = 2 * math.asin(math.min(1.0, math.sqrt(a)));
+    return r * c;
+  }
+
+  double _rad(double deg) => deg * math.pi / 180.0;
 }

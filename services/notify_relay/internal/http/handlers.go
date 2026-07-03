@@ -375,15 +375,24 @@ func (h *Handler) removeByTraccarId(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	pending, err := h.st.GetPendingDeviceByTraccarID(ctx, tid)
-	if err != nil {
-		if errors.Is(err, store.ErrNoRows) {
-			jsonErr(w, 404, "not found")
-			return
-		}
+	if err == nil {
+		h.performRemoval(ctx, w, pending)
+		return
+	}
+	if !errors.Is(err, store.ErrNoRows) {
 		jsonErr(w, 500, "internal error")
 		return
 	}
-	h.performRemoval(ctx, w, pending)
+
+	// Orphan Traccar device: no matching relay row. Still allow the
+	// admin to delete it from Traccar so the Devices list stays clean.
+	log.Printf("removeByTraccarId: orphan Traccar device %d (no relay row); deleting from Traccar only", tid)
+	if err := h.tc.DeleteDevice(ctx, tid); err != nil {
+		log.Printf("traccar.DeleteDevice orphan: %v", err)
+		jsonErr(w, 500, "traccar delete failed")
+		return
+	}
+	w.WriteHeader(204)
 }
 
 func (h *Handler) performRemoval(ctx context.Context, w http.ResponseWriter, pending store.PendingDevice) {

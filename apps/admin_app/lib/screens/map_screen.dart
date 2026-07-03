@@ -22,10 +22,28 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   Ticker? _ticker;
   bool _hasFittedOnce = false;
 
+  /// The Traccar device id currently being followed, or null.
+  int? _followingId;
+
+  /// Set when we programmatically move the map so the manual-pan
+  /// stop-follow detection can distinguish user gestures.
+  bool _programmaticMove = false;
+
   @override
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick)..start();
+  }
+
+  /// External entry point used by the device detail sheet.
+  void followDevice(int traccarId) {
+    setState(() => _followingId = traccarId);
+  }
+
+  void _stopFollow() {
+    if (_followingId != null) {
+      setState(() => _followingId = null);
+    }
   }
 
   @override
@@ -35,7 +53,20 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   }
 
   void _onTick(Duration _) {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    _maybeFollow();
+    setState(() {});
+  }
+
+  void _maybeFollow() {
+    final id = _followingId;
+    if (id == null) return;
+    final est = _estimators[id];
+    if (est == null || !est.hasAnchor) return;
+    final target = est.predictAt(DateTime.now());
+    _programmaticMove = true;
+    _mapController.move(target, _mapController.camera.zoom < 15 ? 17 : _mapController.camera.zoom);
+    _programmaticMove = false;
   }
 
   void _syncEstimators(List<DeviceView> devices) {
@@ -73,11 +104,16 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
           children: [
             FlutterMap(
               mapController: _mapController,
-              options: const MapOptions(
-                initialCenter: LatLng(20.0, 77.0),
+              options: MapOptions(
+                initialCenter: const LatLng(20.0, 77.0),
                 initialZoom: 5,
                 minZoom: 2,
                 maxZoom: 19,
+                onPositionChanged: (position, hasGesture) {
+                  if (hasGesture && !_programmaticMove) {
+                    _stopFollow();
+                  }
+                },
               ),
               children: [
                 TileLayer(
@@ -85,6 +121,8 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                   userAgentPackageName: 'com.familytracker.admin_app',
                   maxZoom: 19,
                 ),
+                if (_followingId != null)
+                  _buildTrailLayer(context, controller, _followingId!),
                 MarkerLayer(
                   markers: [
                     for (final v in devicesWithPos)
@@ -104,12 +142,39 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                       : 'No positions yet',
                 ),
               ),
+            if (_followingId != null)
+              Positioned(
+                top: 16,
+                left: 16,
+                right: 16,
+                child: _FollowingChip(
+                  label: devicesWithPos
+                          .firstWhere(
+                            (d) => d.device.id == _followingId,
+                            orElse: () => devicesWithPos.first,
+                          )
+                          .displayName,
+                  onStop: _stopFollow,
+                  onClearTrail: () {
+                    controller.clearTrail(_followingId!);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Trail cleared'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                ),
+              ),
             Positioned(
               right: 16,
               bottom: 16,
               child: FloatingActionButton.small(
                 heroTag: 'recenter',
-                onPressed: () => _fitToDevices(devicesWithPos),
+                onPressed: () {
+                  _stopFollow();
+                  _fitToDevices(devicesWithPos);
+                },
                 tooltip: 'Recenter',
                 child: const Icon(Icons.center_focus_strong),
               ),
@@ -118,6 +183,45 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         );
       },
     );
+  }
+
+  Widget _buildTrailLayer(
+    BuildContext context,
+    DevicesController controller,
+    int traccarId,
+  ) {
+    final points = controller.trailFor(traccarId);
+    if (points.length < 2) return const SizedBox.shrink();
+
+    // Break the trail into segments when the time gap between consecutive
+    // fixes exceeds [gapThreshold]. Prevents drawing a single long line
+    // across a period where we lost signal.
+    const gapThreshold = Duration(seconds: 60);
+
+    final segments = <List<LatLng>>[[]];
+    for (var i = 0; i < points.length; i++) {
+      final p = points[i];
+      if (i > 0) {
+        final gap = p.fixTime.difference(points[i - 1].fixTime);
+        if (gap > gapThreshold) {
+          segments.add(<LatLng>[]);
+        }
+      }
+      segments.last.add(LatLng(p.latitude, p.longitude));
+    }
+
+    final polylines = segments
+        .where((s) => s.length >= 2)
+        .map((s) => Polyline(
+              points: s,
+              strokeWidth: 4,
+              color: Colors.blue.shade400.withValues(alpha: 0.75),
+            ))
+        .toList();
+
+    if (polylines.isEmpty) return const SizedBox.shrink();
+
+    return PolylineLayer(polylines: polylines);
   }
 
   Marker _buildMarker(BuildContext context, DeviceView v, DateTime now) {
@@ -130,7 +234,11 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       width: 56,
       height: 56,
       child: GestureDetector(
-        onTap: () => showDeviceDetailSheet(context, v),
+        onTap: () => showDeviceDetailSheet(
+          context,
+          v,
+          onFollow: followDevice,
+        ),
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -247,6 +355,77 @@ class _PulsingRingState extends State<_PulsingRing>
           ),
         );
       },
+    );
+  }
+}
+
+class _FollowingChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onStop;
+  final VoidCallback onClearTrail;
+
+  const _FollowingChip({
+    required this.label,
+    required this.onStop,
+    required this.onClearTrail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.max,
+      children: [
+        Expanded(
+          child: Material(
+            color: Colors.blue.shade700,
+            elevation: 3,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
+              onTap: onStop,
+              borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.gps_fixed, color: Colors.white, size: 16),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Following $label',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.close, color: Colors.white, size: 16),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Material(
+          color: Colors.blue.shade700,
+          elevation: 3,
+          shape: const CircleBorder(),
+          child: InkWell(
+            onTap: onClearTrail,
+            customBorder: const CircleBorder(),
+            child: const Padding(
+              padding: EdgeInsets.all(10),
+              child: Tooltip(
+                message: 'Clear trail',
+                child: Icon(Icons.timeline, color: Colors.white, size: 18),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

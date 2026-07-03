@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../api/relay_api.dart';
@@ -8,19 +9,21 @@ import 'package:url_launcher/url_launcher.dart';
 
 Future<void> showDeviceDetailSheet(
   BuildContext context,
-  DeviceView view,
-) async {
+  DeviceView view, {
+  void Function(int traccarId)? onFollow,
+}) async {
   await showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (context) => _DeviceDetailSheet(view: view),
+    builder: (context) => _DeviceDetailSheet(view: view, onFollow: onFollow),
   );
 }
 
 class _DeviceDetailSheet extends StatefulWidget {
   final DeviceView view;
-  const _DeviceDetailSheet({required this.view});
+  final void Function(int traccarId)? onFollow;
+  const _DeviceDetailSheet({required this.view, this.onFollow});
 
   @override
   State<_DeviceDetailSheet> createState() => _DeviceDetailSheetState();
@@ -299,7 +302,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
           _InfoRow(label: 'Status', value: view.device.status),
           if (p != null) ...[
             const Divider(height: 24),
-            _InfoRow(
+            _CopyableInfoRow(
               label: 'Last position',
               value: '${p.latitude.toStringAsFixed(5)}, '
                   '${p.longitude.toStringAsFixed(5)}',
@@ -345,6 +348,22 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
                     ),
                   ),
           ),
+          if (widget.onFollow != null && view.position != null) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () {
+                        Navigator.of(context).pop();
+                        widget.onFollow!(view.device.id);
+                      },
+                icon: const Icon(Icons.my_location),
+                label: const Text('Follow on map'),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [
@@ -516,6 +535,68 @@ class _LiveBannerState extends State<_LiveBanner> {
             child: Text(
               'LIVE mode active · $detail',
               style: TextStyle(color: Colors.green.shade800, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CopyableInfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _CopyableInfoRow({required this.label, required this.value});
+
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Copied to clipboard'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey,
+                  ),
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: () => _copy(context),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Flexible(child: Text(value)),
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.copy_outlined,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],

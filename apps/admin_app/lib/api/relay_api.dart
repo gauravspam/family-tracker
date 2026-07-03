@@ -134,3 +134,23 @@ class _AdminTokenInterceptor extends Interceptor {
     handler.next(options);
   }
 }
+
+/// Converts messy Dio / socket exceptions into a short human-readable line.
+String friendlyNetworkError(Object e) {
+  final s = e.toString();
+  if (s.contains('Network is unreachable') ||
+      s.contains('Unable to resolve host') ||
+      s.contains('SocketException')) {
+    return "Can't reach the server. Check your network connection.";
+  }
+  if (s.contains('Connection refused') || s.contains('ECONNREFUSED')) {
+    return 'The server is not responding. Is the relay running?';
+  }
+  if (s.contains('timeout') || s.contains('Timeout')) {
+    return 'The server took too long to respond. Try again.';
+  }
+  if (s.contains('Relay HTTP 401') || s.contains('Relay HTTP 403')) {
+    return 'Your session has expired. Sign in again.';
+  }
+  return s;
+}

@@ -141,6 +141,10 @@ class _DeviceTile extends StatelessWidget {
             const SizedBox(width: 8),
             _LiveChip(expiresAt: view.liveExpiresAt),
           ],
+          if (view.isOrphan) ...[
+            const SizedBox(width: 8),
+            const _OrphanChip(),
+          ],
         ],
       ),
       subtitle: Text(subtitleParts.join(' · ')),
@@ -290,6 +294,33 @@ class _LiveChipState extends State<_LiveChip> {
           color: Colors.white,
           fontSize: 11,
           fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _OrphanChip extends StatelessWidget {
+  const _OrphanChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Orphan device: exists in Traccar but the relay has no record. '
+          'Safe to remove from the device details.',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade700,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: const Text(
+          'ORPHAN',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );

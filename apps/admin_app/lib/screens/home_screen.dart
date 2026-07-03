@@ -6,6 +6,7 @@ import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../state/devices_controller.dart';
 import '../state/pending_controller.dart';
+import 'about_screen.dart';
 import 'devices_screen.dart';
 import 'map_screen.dart';
 import 'pending_screen.dart';
@@ -49,34 +50,42 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Refresh',
             onPressed: _refresh,
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sign out',
-            onPressed: () async {
-              final auth = context.read<AuthController>();
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Sign out?'),
-                  content: const Text(
-                    'You will need to sign in again with your Traccar credentials and relay admin token.',
+          PopupMenuButton<String>(
+            onSelected: (choice) async {
+              if (choice == 'about') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AboutScreen()),
+                );
+              } else if (choice == 'signout') {
+                final auth = context.read<AuthController>();
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Sign out?'),
+                    content: const Text(
+                      'You will need to sign in again with your Traccar credentials and relay admin token.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Sign out'),
+                      ),
+                    ],
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('Cancel'),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Sign out'),
-                    ),
-                  ],
-                ),
-              );
-              if (confirm == true) {
-                await auth.logout();
+                );
+                if (confirm == true) {
+                  await auth.logout();
+                }
               }
             },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'about', child: Text('About & Server')),
+              PopupMenuItem(value: 'signout', child: Text('Sign out')),
+            ],
           ),
         ],
       ),

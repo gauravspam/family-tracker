@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -14,11 +16,37 @@ class PendingScreen extends StatefulWidget {
   State<PendingScreen> createState() => _PendingScreenState();
 }
 
-class _PendingScreenState extends State<PendingScreen> {
+class _PendingScreenState extends State<PendingScreen> with WidgetsBindingObserver {
+  Timer? _autoRefresh;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+    _startAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _autoRefresh?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _autoRefresh?.cancel();
+    } else if (state == AppLifecycleState.resumed) {
+      _startAutoRefresh();
+      _refresh();
+    }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefresh?.cancel();
+    _autoRefresh = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }
 
   Future<void> _refresh() async {
