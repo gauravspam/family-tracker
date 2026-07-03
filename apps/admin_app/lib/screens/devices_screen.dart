@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
+import '../appearance/avatar_widget.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
 import '../ws/traccar_socket.dart';
@@ -129,10 +130,28 @@ class _DeviceTile extends StatelessWidget {
     final batt = view.position?.batteryPercent;
 
     return ListTile(
-      leading: Icon(
-        view.isOnline ? Icons.circle : Icons.circle_outlined,
-        color: view.isOnline ? Colors.green : Colors.grey,
-        size: 14,
+      leading: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          DeviceAvatar(
+            avatarId: view.device.avatarId,
+            colorHex: view.device.colorHex,
+            size: 40,
+          ),
+          Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: view.isOnline ? Colors.green : Colors.grey,
+                shape: BoxShape.circle,
+                border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
       title: Row(
         children: [

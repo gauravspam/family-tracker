@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../api/relay_api.dart';
+import '../appearance/avatar_widget.dart';
+import '../appearance/avatars.dart';
+import '../appearance/colors.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -32,6 +35,8 @@ class _DeviceDetailSheet extends StatefulWidget {
 class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   bool _busy = false;
   late String _displayName;
+  late String? _avatarId;
+  late String? _colorHex;
 
   DeviceView get view => widget.view;
 
@@ -39,6 +44,55 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   void initState() {
     super.initState();
     _displayName = view.displayName;
+    _avatarId = view.device.avatarId;
+    _colorHex = view.device.colorHex;
+  }
+
+  Future<void> _editAppearance() async {
+    final result = await showModalBottomSheet<_AppearanceResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _AppearanceEditor(
+        initialAvatarId: _avatarId ?? 'avatar_default',
+        initialColorHex: _colorHex ?? DeviceColorPalette.toHex(DeviceColorPalette.defaultColor),
+      ),
+    );
+
+    if (result == null) return;
+    if (!mounted) return;
+
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final relay = context.read<RelayApi>();
+    final devices = context.read<DevicesController>();
+
+    try {
+      await relay.setAppearance(
+        traccarDeviceId: view.device.id,
+        avatarId: result.avatarId,
+        colorHex: result.colorHex,
+      );
+      await devices.refresh();
+      if (!mounted) return;
+      setState(() {
+        _avatarId = result.avatarId;
+        _colorHex = result.colorHex;
+        _busy = false;
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Appearance updated')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Appearance update failed: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
   }
 
   Future<void> _rename() async {
@@ -269,16 +323,46 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
         children: [
           Row(
             children: [
-              Icon(
-                view.isOnline ? Icons.circle : Icons.circle_outlined,
-                color: view.isOnline ? Colors.green : Colors.grey,
-                size: 12,
+              GestureDetector(
+                onTap: _busy ? null : _editAppearance,
+                child: DeviceAvatar(
+                  avatarId: _avatarId,
+                  colorHex: _colorHex,
+                  size: 48,
+                ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  _displayName,
-                  style: Theme.of(context).textTheme.titleLarge,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          view.isOnline ? Icons.circle : Icons.circle_outlined,
+                          color: view.isOnline ? Colors.green : Colors.grey,
+                          size: 10,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _displayName,
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                      ],
+                    ),
+                    TextButton.icon(
+                      onPressed: _busy ? null : _editAppearance,
+                      icon: const Icon(Icons.palette_outlined, size: 16),
+                      label: const Text('Change avatar & color'),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               IconButton(
@@ -600,6 +684,168 @@ class _CopyableInfoRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AppearanceResult {
+  final String avatarId;
+  final String colorHex;
+  const _AppearanceResult({required this.avatarId, required this.colorHex});
+}
+
+class _AppearanceEditor extends StatefulWidget {
+  final String initialAvatarId;
+  final String initialColorHex;
+
+  const _AppearanceEditor({
+    required this.initialAvatarId,
+    required this.initialColorHex,
+  });
+
+  @override
+  State<_AppearanceEditor> createState() => _AppearanceEditorState();
+}
+
+class _AppearanceEditorState extends State<_AppearanceEditor> {
+  late String _avatarId;
+  late String _colorHex;
+
+  @override
+  void initState() {
+    super.initState();
+    _avatarId = widget.initialAvatarId;
+    _colorHex = widget.initialColorHex;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 8,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  DeviceAvatar(
+                    avatarId: _avatarId,
+                    colorHex: _colorHex,
+                    size: 56,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Preview',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Avatar',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final preset in AvatarCatalog.all)
+                    GestureDetector(
+                      onTap: () => setState(() => _avatarId = preset.id),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _avatarId == preset.id
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.transparent,
+                            width: 3,
+                          ),
+                        ),
+                        child: DeviceAvatar(
+                          avatarId: preset.id,
+                          colorHex: _colorHex,
+                          size: 44,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Color',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final c in DeviceColorPalette.all)
+                    GestureDetector(
+                      onTap: () => setState(
+                        () => _colorHex = DeviceColorPalette.toHex(c),
+                      ),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: c,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _colorHex == DeviceColorPalette.toHex(c)
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.transparent,
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(
+                        context,
+                        _AppearanceResult(
+                          avatarId: _avatarId,
+                          colorHex: _colorHex,
+                        ),
+                      ),
+                      child: const Text('Save'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -5,6 +5,7 @@ class TraccarDevice {
   final String status;
   final int positionId;
   final bool disabled;
+  final Map<String, dynamic> attributes;
 
   const TraccarDevice({
     required this.id,
@@ -13,6 +14,7 @@ class TraccarDevice {
     required this.status,
     required this.positionId,
     required this.disabled,
+    required this.attributes,
   });
 
   factory TraccarDevice.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,16 @@ class TraccarDevice {
       status: json['status'] as String? ?? 'unknown',
       positionId: json['positionId'] as int? ?? 0,
       disabled: json['disabled'] as bool? ?? false,
+      attributes: (json['attributes'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, v),
+          ) ??
+          const {},
     );
   }
+
+  /// Per-device avatar identifier stored in Traccar attributes.
+  String? get avatarId => attributes['avatarId'] as String?;
+
+  /// Per-device color as "#RRGGBB" stored in Traccar attributes.
+  String? get colorHex => attributes['color'] as String?;
 }

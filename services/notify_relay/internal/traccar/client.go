@@ -160,3 +160,47 @@ func (c *Client) RenameDevice(ctx context.Context, id int64, newName string) err
 	}
 	return nil
 }
+
+// SetDeviceAttributes merges the given key/value map into the device's
+// attributes JSON and writes it back to Traccar via PUT.
+func (c *Client) SetDeviceAttributes(ctx context.Context, id int64, attrs map[string]string) error {
+	getResp, err := c.do(ctx, "GET", fmt.Sprintf("/api/devices?id=%d", id), nil)
+	if err != nil {
+		return err
+	}
+	defer getResp.Body.Close()
+
+	if getResp.StatusCode != 200 {
+		b, _ := io.ReadAll(getResp.Body)
+		return fmt.Errorf("fetch device %d: %s", getResp.StatusCode, b)
+	}
+
+	var list []map[string]any
+	if err := json.NewDecoder(getResp.Body).Decode(&list); err != nil {
+		return fmt.Errorf("decode device list: %w", err)
+	}
+	if len(list) == 0 {
+		return fmt.Errorf("device %d not found", id)
+	}
+
+	obj := list[0]
+	existing, _ := obj["attributes"].(map[string]any)
+	if existing == nil {
+		existing = map[string]any{}
+	}
+	for k, v := range attrs {
+		existing[k] = v
+	}
+	obj["attributes"] = existing
+
+	putResp, err := c.do(ctx, "PUT", fmt.Sprintf("/api/devices/%d", id), obj)
+	if err != nil {
+		return err
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != 200 {
+		b, _ := io.ReadAll(putResp.Body)
+		return fmt.Errorf("set attributes %d: %s", putResp.StatusCode, b)
+	}
+	return nil
+}

@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../map/motion_estimator.dart';
+import '../appearance/avatar_widget.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
 import 'device_detail_sheet.dart';
@@ -243,18 +244,10 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
           alignment: Alignment.center,
           children: [
             if (v.isLive) _PulsingRing(color: Colors.green),
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: v.isOnline ? Colors.green : Colors.grey,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 3),
-                boxShadow: const [
-                  BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
-                ],
-              ),
-              child: const Icon(Icons.person, color: Colors.white, size: 20),
+            DeviceAvatar(
+              avatarId: v.device.avatarId,
+              colorHex: v.device.colorHex,
+              size: 40,
             ),
           ],
         ),

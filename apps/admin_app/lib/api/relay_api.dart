@@ -77,7 +77,24 @@ class RelayApi {
     _checkStatus(r);
   }
 
-    Future<void> triggerLive({
+    Future<void> setAppearance({
+    required int traccarDeviceId,
+    String? colorHex,
+    String? avatarId,
+  }) async {
+    final body = <String, dynamic>{};
+    if (colorHex != null) body['color'] = colorHex;
+    if (avatarId != null) body['avatarId'] = avatarId;
+    if (body.isEmpty) return;
+    final r = await _dio.put(
+      '/admin/appearance/$traccarDeviceId',
+      data: jsonEncode(body),
+      options: Options(contentType: Headers.jsonContentType),
+    );
+    _checkStatus(r);
+  }
+
+  Future<void> triggerLive({
     required int traccarDeviceId,
     required DateTime expiresAtUtc,
   }) async {

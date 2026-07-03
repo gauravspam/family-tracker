@@ -53,6 +53,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/admin/remove/{id}", h.remove)
 		r.Delete("/admin/device-by-traccar/{traccarId}", h.removeByTraccarId)
 		r.Put("/admin/rename/{traccarId}", h.renameByTraccarId)
+		r.Put("/admin/appearance/{traccarId}", h.setAppearanceByTraccarId)
 		r.Post("/admin/live/{deviceId}", h.live)
 		r.Post("/admin/idle/{deviceId}", h.idle)
 		r.Post("/admin/fcm-token", h.registerAdminFCM)
@@ -614,4 +615,42 @@ func (h *Handler) idle(w http.ResponseWriter, r *http.Request) {
         }
         _ = h.st.RecordCommand(ctx, tid, "idle_mode")
         w.WriteHeader(204)
+}
+
+// ── PUT /admin/appearance/{traccarId} ──
+
+func (h *Handler) setAppearanceByTraccarId(w http.ResponseWriter, r *http.Request) {
+	tid, err := strconv.ParseInt(chi.URLParam(r, "traccarId"), 10, 64)
+	if err != nil {
+		jsonErr(w, 400, "invalid traccarId")
+		return
+	}
+
+	var body struct {
+		Color    *string `json:"color"`
+		AvatarID *string `json:"avatarId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, 400, "invalid json")
+		return
+	}
+
+	attrs := map[string]string{}
+	if body.Color != nil {
+		attrs["color"] = strings.TrimSpace(*body.Color)
+	}
+	if body.AvatarID != nil {
+		attrs["avatarId"] = strings.TrimSpace(*body.AvatarID)
+	}
+	if len(attrs) == 0 {
+		jsonErr(w, 400, "no fields to update")
+		return
+	}
+
+	if err := h.tc.SetDeviceAttributes(r.Context(), tid, attrs); err != nil {
+		log.Printf("traccar.SetDeviceAttributes: %v", err)
+		jsonErr(w, 500, "appearance update failed")
+		return
+	}
+	w.WriteHeader(204)
 }
