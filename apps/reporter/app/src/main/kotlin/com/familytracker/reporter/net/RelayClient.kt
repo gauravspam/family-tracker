@@ -62,6 +62,28 @@ class RelayClient {
             )
         }
     }
+
+    /**
+     * Pushes a rotated FCM token to the relay so it can reach this device.
+     * Authenticates with the ingest token (which we already hold post-approval).
+     */
+    fun refreshFcm(androidId: String, ingestToken: String, fcmToken: String) {
+        val body = JSONObject().apply {
+            put("androidId", androidId)
+            put("ingestToken", ingestToken)
+            put("fcmToken", fcmToken)
+        }
+        val req = Request.Builder()
+            .url(Config.RELAY_BASE_URL + "/api/device/refresh-fcm")
+            .post(body.toString().toRequestBody(json))
+            .build()
+
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw RuntimeException("refresh-fcm failed: HTTP ${resp.code}")
+            }
+        }
+    }
 }
 
 data class DeviceStatus(

@@ -72,6 +72,15 @@ class RelayApi {
     _checkStatus(r);
   }
 
+  Future<void> ringDevice(int traccarDeviceId, {int durationSec = 30}) async {
+    final r = await _dio.post(
+      '/admin/ring/$traccarDeviceId',
+      data: jsonEncode({'durationSec': durationSec}),
+      options: Options(contentType: Headers.jsonContentType),
+    );
+    _checkStatus(r);
+  }
+
   Future<void> stopLive(int traccarDeviceId) async {
     final r = await _dio.post('/admin/idle/$traccarDeviceId');
     _checkStatus(r);

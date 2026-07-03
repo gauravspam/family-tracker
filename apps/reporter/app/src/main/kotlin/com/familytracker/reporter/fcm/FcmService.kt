@@ -3,8 +3,13 @@ package com.familytracker.reporter.fcm
 import android.util.Log
 import com.familytracker.reporter.ApprovalStatus
 import com.familytracker.reporter.Storage
+import com.familytracker.reporter.net.RelayClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.familytracker.reporter.TrackingMode
 import com.familytracker.reporter.service.LocationForegroundService
+import com.familytracker.reporter.service.RingService
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
@@ -17,6 +22,23 @@ class FcmService : FirebaseMessagingService() {
         val storage = Storage(applicationContext)
         storage.fcmToken = token
         storage.fcmTokenDirty = true
+
+        // If we're already approved, push the new token to the relay so it
+        // can keep reaching us with FCM commands. If we're not yet approved
+        // the token will be sent as part of the next /join request.
+        val androidId = storage.androidId
+        val ingestToken = storage.ingestToken
+        if (androidId != null && ingestToken != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    RelayClient().refreshFcm(androidId, ingestToken, token)
+                    storage.fcmTokenDirty = false
+                    Log.i(tag, "FCM token pushed to relay")
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to push FCM token to relay; will retry later", e)
+                }
+            }
+        }
     }
 
     override fun onMessageReceived(msg: RemoteMessage) {
@@ -30,6 +52,7 @@ class FcmService : FirebaseMessagingService() {
             "live_mode" -> handleLive(storage, data)
             "idle_mode" -> handleIdle(storage)
             "removed" -> handleRemoved(storage)
+            "ring" -> handleRing(data)
             else -> Log.w(tag, "Unknown command $command")
         }
     }
@@ -77,4 +100,10 @@ class FcmService : FirebaseMessagingService() {
         storage.approval = ApprovalStatus.REMOVED
         LocationForegroundService.stop(applicationContext)
     }
+
+    private fun handleRing(data: Map<String, String>) {
+        val duration = data["durationSec"]?.toIntOrNull() ?: 30
+        RingService.start(applicationContext, duration)
+    }
+
 }

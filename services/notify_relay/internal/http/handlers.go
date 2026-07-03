@@ -43,6 +43,7 @@ func (h *Handler) Routes() http.Handler {
 	r.Get("/healthz", h.healthz)
 	r.Post("/join", h.join)
 	r.Get("/api/device/status", h.deviceStatus)
+	r.Post("/api/device/refresh-fcm", h.refreshFcm)
 
 	r.Group(func(r chi.Router) {
 		r.Use(h.adminAuth)
@@ -56,6 +57,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Put("/admin/appearance/{traccarId}", h.setAppearanceByTraccarId)
 		r.Post("/admin/live/{deviceId}", h.live)
 		r.Post("/admin/idle/{deviceId}", h.idle)
+		r.Post("/admin/ring/{deviceId}", h.ring)
 		r.Post("/admin/fcm-token", h.registerAdminFCM)
 	})
 
@@ -650,6 +652,94 @@ func (h *Handler) setAppearanceByTraccarId(w http.ResponseWriter, r *http.Reques
 	if err := h.tc.SetDeviceAttributes(r.Context(), tid, attrs); err != nil {
 		log.Printf("traccar.SetDeviceAttributes: %v", err)
 		jsonErr(w, 500, "appearance update failed")
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// ── POST /admin/ring/{deviceId} ──
+
+func (h *Handler) ring(w http.ResponseWriter, r *http.Request) {
+	tid, err := strconv.ParseInt(chi.URLParam(r, "deviceId"), 10, 64)
+	if err != nil {
+		jsonErr(w, 400, "invalid deviceId")
+		return
+	}
+
+	var req struct {
+		DurationSec int `json:"durationSec"`
+	}
+	// Body optional; default duration if not provided.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.DurationSec <= 0 || req.DurationSec > 300 {
+		req.DurationSec = 30
+	}
+
+	ctx := r.Context()
+	meta, err := h.st.GetReporterMetaByTraccarID(ctx, tid)
+	if err != nil {
+		if errors.Is(err, store.ErrNoRows) {
+			jsonErr(w, 404, "device not found")
+			return
+		}
+		jsonErr(w, 500, "internal error")
+		return
+	}
+
+	if err := h.fc.SendData(ctx, meta.FCMToken, map[string]string{
+		"command":     "ring",
+		"durationSec": strconv.Itoa(req.DurationSec),
+	}); err != nil {
+		log.Printf("FCM ring: %v", err)
+		jsonErr(w, 500, "fcm send failed")
+		return
+	}
+	_ = h.st.RecordCommand(ctx, tid, "ring")
+	w.WriteHeader(204)
+}
+
+// ── POST /api/device/refresh-fcm ──
+//
+// Called by the reporter when Firebase rotates its FCM token. Public
+// endpoint (no admin token) but requires the androidId + a valid current
+// or previous ingestToken so someone can't overwrite another device's
+// token by knowing only its androidId.
+
+func (h *Handler) refreshFcm(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AndroidID   string `json:"androidId"`
+		IngestToken string `json:"ingestToken"`
+		FCMToken    string `json:"fcmToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, "invalid json")
+		return
+	}
+	if req.AndroidID == "" || req.IngestToken == "" || req.FCMToken == "" {
+		jsonErr(w, 400, "androidId, ingestToken, fcmToken required")
+		return
+	}
+
+	ctx := r.Context()
+	meta, err := h.st.GetReporterMetaByAndroidID(ctx, req.AndroidID)
+	if err != nil {
+		if errors.Is(err, store.ErrNoRows) {
+			jsonErr(w, 404, "not found")
+			return
+		}
+		jsonErr(w, 500, "internal error")
+		return
+	}
+
+	// Auth: must present the ingest token we issued.
+	if meta.IngestToken == nil || *meta.IngestToken != req.IngestToken {
+		jsonErr(w, 403, "invalid ingest token")
+		return
+	}
+
+	if err := h.st.UpdateReporterFCMToken(ctx, meta.TraccarDeviceID, req.FCMToken); err != nil {
+		log.Printf("UpdateReporterFCMToken: %v", err)
+		jsonErr(w, 500, "internal error")
 		return
 	}
 	w.WriteHeader(204)

@@ -293,4 +293,12 @@ func (s *Store) DeleteReporterMetaByTraccarID(ctx context.Context, traccarID int
 	return err
 }
 
+func (s *Store) UpdateReporterFCMToken(ctx context.Context, traccarID int64, fcmToken string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE reporter_device_meta
+		SET fcm_token = $2, updated_at = now()
+		WHERE traccar_device_id = $1`, traccarID, fcmToken)
+	return err
+}
+
 var ErrNoRows = pgx.ErrNoRows

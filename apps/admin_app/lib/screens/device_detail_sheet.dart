@@ -6,6 +6,7 @@ import '../api/relay_api.dart';
 import '../appearance/avatar_widget.dart';
 import '../appearance/avatars.dart';
 import '../appearance/colors.dart';
+import '../services/geocode_service.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -226,6 +227,30 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     }
   }
 
+  Future<void> _ring() async {
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final relay = context.read<RelayApi>();
+
+    try {
+      await relay.ringDevice(view.device.id);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Ringing device...')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Ring failed: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
   Future<void> _remove() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -391,6 +416,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
               value: '${p.latitude.toStringAsFixed(5)}, '
                   '${p.longitude.toStringAsFixed(5)}',
             ),
+            _AddressRow(latitude: p.latitude, longitude: p.longitude),
             _InfoRow(
               label: 'Accuracy',
               value: '${p.accuracy.toStringAsFixed(0)} m',
@@ -455,15 +481,23 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
                 child: OutlinedButton.icon(
                   onPressed:
                       (_busy || view.position == null) ? null : _openDirections,
-                  icon: const Icon(Icons.directions),
-                  label: const Text('Directions'),
+                  icon: const Icon(Icons.directions, size: 18),
+                  label: const Text('Route'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _ring,
+                  icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                  label: const Text('Ring'),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : _remove,
-                  icon: const Icon(Icons.delete_outline),
+                  icon: const Icon(Icons.delete_outline, size: 18),
                   label: const Text('Remove'),
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
                 ),
@@ -845,6 +879,145 @@ class _AppearanceEditorState extends State<_AppearanceEditor> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddressRow extends StatefulWidget {
+  final double latitude;
+  final double longitude;
+  const _AddressRow({required this.latitude, required this.longitude});
+
+  @override
+  State<_AddressRow> createState() => _AddressRowState();
+}
+
+class _AddressRowState extends State<_AddressRow> {
+  String? _address;
+  bool _loading = true;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lookup();
+  }
+
+  @override
+  void didUpdateWidget(_AddressRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.latitude != widget.latitude ||
+        oldWidget.longitude != widget.longitude) {
+      setState(() {
+        _address = null;
+        _loading = true;
+        _failed = false;
+      });
+      _lookup();
+    }
+  }
+
+  Future<void> _lookup() async {
+    final result = await GeocodeService.instance
+        .reverse(widget.latitude, widget.longitude);
+    if (!mounted) return;
+    setState(() {
+      _address = result;
+      _loading = false;
+      _failed = result == null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = 'Address';
+    final subdued = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+
+    Widget content;
+    if (_loading) {
+      content = Row(
+        children: [
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 8),
+          Text('Looking up address...', style: subdued),
+        ],
+      );
+    } else if (_failed || _address == null) {
+      content = GestureDetector(
+        onTap: () {
+          setState(() {
+            _loading = true;
+            _failed = false;
+          });
+          _lookup();
+        },
+        child: Row(
+          children: [
+            Icon(Icons.refresh,
+                size: 14,
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Text('Address unavailable · tap to retry', style: subdued),
+          ],
+        ),
+      );
+    } else {
+      content = _CopyableAddressContent(text: _address!);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 110, child: Text(label, style: subdued)),
+          Expanded(child: content),
+        ],
+      ),
+    );
+  }
+}
+
+class _CopyableAddressContent extends StatelessWidget {
+  final String text;
+  const _CopyableAddressContent({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () async {
+        await Clipboard.setData(ClipboardData(text: text));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Copied'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      },
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(child: Text(text)),
+            const SizedBox(width: 6),
+            Icon(
+              Icons.copy_outlined,
+              size: 14,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ],
         ),
       ),
     );

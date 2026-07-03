@@ -36,6 +36,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class LocationForegroundService : Service() {
 
@@ -177,6 +178,9 @@ class LocationForegroundService : Service() {
     private fun startPollLoop() {
         pollJob?.cancel()
         pollJob = scope.launch {
+            // Immediate poll on startup — pushes any rotated FCM token
+            // and picks up a "removed" state without waiting a full interval.
+            pollOnce()
             while (true) {
                 delay(POLL_INTERVAL_MS)
                 pollOnce()
@@ -186,6 +190,30 @@ class LocationForegroundService : Service() {
 
     private fun pollOnce() {
         val androidId = storage.androidId ?: return
+
+        // Ensure the relay always has our current FCM token. We fetch the
+        // live token from Firebase on each poll and push it if it doesn't
+        // match what we last uploaded. Cheap: the Firebase getToken() call
+        // is a local cache read once the initial fetch has succeeded.
+        val ingest = storage.ingestToken
+        if (ingest != null) {
+            try {
+                val live = kotlinx.coroutines.runBlocking {
+                    com.google.firebase.messaging.FirebaseMessaging
+                        .getInstance().token.await()
+                }
+                val cached = storage.fcmToken
+                if (live != cached || storage.fcmTokenDirty) {
+                    relay.refreshFcm(androidId, ingest, live)
+                    storage.fcmToken = live
+                    storage.fcmTokenDirty = false
+                    Log.i(tag, "Pushed FCM token to relay")
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "FCM token push failed", e)
+            }
+        }
+
         try {
             val status = relay.getDeviceStatus(androidId)
             Log.i(tag, "Poll status=${status.status}")

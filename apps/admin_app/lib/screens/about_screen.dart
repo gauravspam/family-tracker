@@ -4,7 +4,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../auth/session_storage.dart';
-import '../config.dart';
+import '../config/server_config.dart';
+import 'server_setup_screen.dart';
 import '../ws/traccar_socket.dart';
 
 class AboutScreen extends StatefulWidget {
@@ -62,26 +63,43 @@ class _AboutScreenState extends State<AboutScreen> {
               _row(context, 'Traccar user id', d.traccarUserId),
               const SizedBox(height: 24),
               _sectionHeader(context, 'Server endpoints'),
-              _row(
-                context,
-                'Traccar REST',
-                AppConfig.traccarBaseUrl,
-                copyable: true,
-                monospace: true,
-              ),
-              _row(
-                context,
-                'Traccar WebSocket',
-                AppConfig.traccarWsUrl,
-                copyable: true,
-                monospace: true,
-              ),
-              _row(
-                context,
-                'Relay',
-                AppConfig.relayBaseUrl,
-                copyable: true,
-                monospace: true,
+              Builder(
+                builder: (ctx) {
+                  final urls = Provider.of<ServerUrls>(ctx);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _row(ctx, 'Traccar REST', urls.traccarBaseUrl, copyable: true, monospace: true),
+                      _row(ctx, 'Traccar WebSocket', urls.traccarWsUrl, copyable: true, monospace: true),
+                      _row(ctx, 'Relay', urls.relayBaseUrl, copyable: true, monospace: true),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final onChanged = Provider.of<void Function(ServerUrls)>(
+                              ctx,
+                              listen: false,
+                            );
+                            await Navigator.of(ctx).push(
+                              MaterialPageRoute(
+                                builder: (_) => ServerSetupScreen(
+                                  initial: urls,
+                                  onSaved: (u) {
+                                    onChanged(u);
+                                    Navigator.of(ctx).pop();
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('Change server URLs'),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 24),
               _sectionHeader(context, 'Live'),
