@@ -4,6 +4,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'avatars.dart';
 import 'colors.dart';
 
+/// Displays a device avatar: emoji SVG on a white circle, surrounded by a
+/// colored ring that represents the per-device color.
 class DeviceAvatar extends StatelessWidget {
   final String? avatarId;
   final String? colorHex;
@@ -22,14 +24,15 @@ class DeviceAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = DeviceColorPalette.parse(colorHex);
     final avatar = AvatarCatalog.find(avatarId);
+    final ringWidth = (size * 0.08).clamp(2.0, 4.0);
+    final innerSize = size - ringWidth * 2;
 
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: color,
         shape: BoxShape.circle,
-        border: showBorder ? Border.all(color: Colors.white, width: 2) : null,
+        border: Border.all(color: color, width: ringWidth),
         boxShadow: showBorder
             ? const [
                 BoxShadow(
@@ -37,14 +40,20 @@ class DeviceAvatar extends StatelessWidget {
               ]
             : null,
       ),
-      padding: EdgeInsets.all(size * 0.12),
-      child: SvgPicture.asset(
-        avatar.asset,
-        fit: BoxFit.contain,
-        placeholderBuilder: (_) => Icon(
-          Icons.person,
+      child: Container(
+        decoration: const BoxDecoration(
           color: Colors.white,
-          size: size * 0.5,
+          shape: BoxShape.circle,
+        ),
+        padding: EdgeInsets.all(innerSize * 0.08),
+        child: SvgPicture.asset(
+          avatar.asset,
+          fit: BoxFit.contain,
+          placeholderBuilder: (_) => Icon(
+            Icons.person,
+            color: Colors.grey,
+            size: innerSize * 0.5,
+          ),
         ),
       ),
     );

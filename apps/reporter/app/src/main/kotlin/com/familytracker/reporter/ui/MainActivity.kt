@@ -150,10 +150,11 @@ class MainActivity : AppCompatActivity() {
         LocationForegroundService.start(this)
         stopPolling()
         cancelRegistration()
-        show(
-            title = "All set",
-            subtitle = "Location tracking is now active.\nYou may close this screen."
-        )
+
+        // Solid black screen.
+        val black = android.view.View(this)
+        black.setBackgroundColor(android.graphics.Color.BLACK)
+        setContentView(black)
     }
 
     private fun onRemoved() {

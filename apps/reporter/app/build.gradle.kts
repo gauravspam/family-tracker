@@ -16,10 +16,20 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getProperty("user.home") + "/family-tracker/secrets/reporter-release.jks")
+            storePassword = "familytracker2026"
+            keyAlias = "reporter"
+            keyPassword = "familytracker2026"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
