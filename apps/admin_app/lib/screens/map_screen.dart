@@ -169,7 +169,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
               ),
             Positioned(
               right: 16,
-              bottom: 16,
+              bottom: 100,
               child: FloatingActionButton.small(
                 heroTag: 'recenter',
                 onPressed: () {

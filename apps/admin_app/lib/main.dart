@@ -54,17 +54,31 @@ class _AdminAppState extends State<AdminApp> {
   Widget build(BuildContext context) {
     final theme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: Colors.blue,
+        seedColor: const Color(0xFF007AFF), // iOS system blue
         brightness: Brightness.light,
       ),
       useMaterial3: true,
+      cardTheme: CardThemeData(
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      ),
+      dividerTheme: const DividerThemeData(space: 0, thickness: 0.5),
     );
     final darkTheme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: Colors.blue,
+        seedColor: const Color(0xFF0A84FF), // iOS system blue dark
         brightness: Brightness.dark,
       ),
       useMaterial3: true,
+      cardTheme: CardThemeData(
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        color: const Color(0xFF1C1C1E), // iOS dark card
+      ),
+      dividerTheme: const DividerThemeData(space: 0, thickness: 0.5),
+      scaffoldBackgroundColor: Colors.black,
     );
 
     if (!_loaded) {

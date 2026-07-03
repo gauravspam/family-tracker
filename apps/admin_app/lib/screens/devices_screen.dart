@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../appearance/avatar_widget.dart';
+import '../appearance/colors.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
 import '../ws/traccar_socket.dart';
@@ -66,10 +67,10 @@ class DevicesScreen extends StatelessWidget {
   }
 
   Widget _buildList(List<DeviceView> devices) {
-    return ListView.separated(
+    return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(top: 90, bottom: 100),
       itemCount: devices.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, index) => _DeviceTile(view: devices[index]),
     );
   }
@@ -115,77 +116,110 @@ class _DeviceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitleParts = <String>[];
-    if (view.position != null) {
-      final p = view.position!;
-      subtitleParts.add(
-        '${p.latitude.toStringAsFixed(5)}, ${p.longitude.toStringAsFixed(5)}',
-      );
-      subtitleParts.add(_relative(p.fixTime));
-    } else {
-      subtitleParts.add('No position yet');
-    }
+    final scheme = Theme.of(context).colorScheme;
+    final p = view.position;
+    final batt = p?.batteryPercent;
+    final low = p?.isLowBattery ?? false;
 
-    final low = view.position?.isLowBattery ?? false;
-    final batt = view.position?.batteryPercent;
+    // Subtitle parts
+    final timePart = p != null ? _relative(p.fixTime) : 'No position yet';
+    final coordsPart = p != null
+        ? '${p.latitude.toStringAsFixed(5)}, ${p.longitude.toStringAsFixed(5)}'
+        : '';
 
-    return ListTile(
-      leading: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          DeviceAvatar(
-            avatarId: view.device.avatarId,
-            colorHex: view.device.colorHex,
-            size: 40,
-          ),
-          Positioned(
-            right: -2,
-            bottom: -2,
-            child: Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: view.isOnline ? Colors.green : Colors.grey,
-                shape: BoxShape.circle,
-                border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2),
+    return Card(
+      child: InkWell(
+        onTap: () => showDeviceDetailSheet(context, view),
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          child: Row(
+            children: [
+              // Avatar with optional live glow
+              _AvatarWithGlow(
+                avatarId: view.device.avatarId,
+                colorHex: view.device.colorHex,
+                isLive: view.isLive,
+                isOnline: view.isOnline,
               ),
-            ),
-          ),
-        ],
-      ),
-      title: Row(
-        children: [
-          Flexible(child: Text(view.displayName, overflow: TextOverflow.ellipsis)),
-          if (view.isLive) ...[
-            const SizedBox(width: 8),
-            _LiveChip(expiresAt: view.liveExpiresAt),
-          ],
-          if (view.isOrphan) ...[
-            const SizedBox(width: 8),
-            const _OrphanChip(),
-          ],
-        ],
-      ),
-      subtitle: Text(subtitleParts.join(' · ')),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (low)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Tooltip(
-                message: 'Low battery ($batt%)',
-                child: const Icon(
-                  Icons.battery_alert,
-                  color: Colors.red,
-                  size: 20,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Name + live chip
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            view.displayName,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (view.isLive) ...[
+                          const SizedBox(width: 8),
+                          _LiveChip(expiresAt: view.liveExpiresAt),
+                        ],
+                        if (view.isOrphan) ...[
+                          const SizedBox(width: 8),
+                          const _OrphanChip(),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // Coordinates + time
+                    if (coordsPart.isNotEmpty)
+                      Text(
+                        '$coordsPart · $timePart',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    if (coordsPart.isEmpty)
+                      Text(
+                        timePart,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    // Battery row
+                    if (batt != null)
+                      Row(
+                        children: [
+                          Icon(
+                            low ? Icons.battery_alert : Icons.battery_std,
+                            size: 14,
+                            color: low ? Colors.red : scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$batt%',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: low ? Colors.red : scheme.onSurfaceVariant,
+                              fontWeight: low ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
-            ),
-          const Icon(Icons.chevron_right),
-        ],
+              Icon(
+                Icons.chevron_right_rounded,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.4),
+              ),
+            ],
+          ),
+        ),
       ),
-      onTap: () => showDeviceDetailSheet(context, view),
     );
   }
 
@@ -194,7 +228,68 @@ class _DeviceTile extends StatelessWidget {
     if (diff.inSeconds < 60) return 'just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return DateFormat.yMd().add_Hm().format(t.toLocal());
+    return '${t.toLocal().month}/${t.toLocal().day} ${t.toLocal().hour}:${t.toLocal().minute.toString().padLeft(2, "0")}';
+  }
+}
+
+class _AvatarWithGlow extends StatelessWidget {
+  final String? avatarId;
+  final String? colorHex;
+  final bool isLive;
+  final bool isOnline;
+
+  const _AvatarWithGlow({
+    required this.avatarId,
+    required this.colorHex,
+    required this.isLive,
+    required this.isOnline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = DeviceColorPalette.parse(colorHex);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (isLive)
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.5),
+                    blurRadius: 16,
+                    spreadRadius: 4,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        DeviceAvatar(
+          avatarId: avatarId,
+          colorHex: colorHex,
+          size: 48,
+        ),
+        Positioned(
+          right: -1,
+          bottom: -1,
+          child: Container(
+            width: 14,
+            height: 14,
+            decoration: BoxDecoration(
+              color: isOnline ? Colors.green : Colors.grey,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Theme.of(context).cardColor,
+                width: 2,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

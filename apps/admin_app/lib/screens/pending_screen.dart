@@ -205,10 +205,10 @@ class _PendingScreenState extends State<PendingScreen> with WidgetsBindingObserv
   }
 
   Widget _buildList(List<PendingDevice> items) {
-    return ListView.separated(
+    return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(top: 90, bottom: 100),
       itemCount: items.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) => _PendingTile(
         device: items[i],
         onApprove: () => _approve(items[i]),
@@ -231,9 +231,10 @@ class _PendingTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
@@ -286,6 +287,7 @@ class _PendingTile extends StatelessWidget {
             ],
           ),
         ],
+        ),
       ),
     );
   }

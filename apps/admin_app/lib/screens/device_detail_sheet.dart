@@ -476,31 +476,23 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
           ],
           const SizedBox(height: 8),
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed:
-                      (_busy || view.position == null) ? null : _openDirections,
-                  icon: const Icon(Icons.directions, size: 18),
-                  label: const Text('Route'),
-                ),
+              _ActionChip(
+                icon: Icons.directions_rounded,
+                label: 'Route',
+                onTap: (_busy || view.position == null) ? null : _openDirections,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _ring,
-                  icon: const Icon(Icons.notifications_active_outlined, size: 18),
-                  label: const Text('Ring'),
-                ),
+              _ActionChip(
+                icon: Icons.notifications_active_outlined,
+                label: 'Ring',
+                onTap: _busy ? null : _ring,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _remove,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('Remove'),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                ),
+              _ActionChip(
+                icon: Icons.delete_outline_rounded,
+                label: 'Remove',
+                onTap: _busy ? null : _remove,
+                color: Colors.red,
               ),
             ],
           ),
@@ -1018,6 +1010,60 @@ class _CopyableAddressContent extends StatelessWidget {
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final Color? color;
+
+  const _ActionChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fg = color ?? scheme.onSurface;
+    final disabled = onTap == null;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Opacity(
+          opacity: disabled ? 0.4 : 1.0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: (color ?? scheme.primary).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(icon, color: fg, size: 24),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
