@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import 'package:tracker_core/tracker_core.dart';
 
 import '../map/motion_estimator.dart';
 import '../appearance/avatar_widget.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
+import '../state/hidden_devices_controller.dart';
 import 'device_detail_sheet.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  final int remountSignal;
+  const MapScreen({super.key, this.remountSignal = 0});
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -30,13 +34,15 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   /// stop-follow detection can distinguish user gestures.
   bool _programmaticMove = false;
 
+  /// History playback: index into the trail for the followed device.
+  int? _playbackIndex;
+
   @override
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick)..start();
   }
 
-  /// External entry point used by the device detail sheet.
   void followDevice(int traccarId) {
     setState(() => _followingId = traccarId);
   }
@@ -62,6 +68,16 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   void _maybeFollow() {
     final id = _followingId;
     if (id == null) return;
+    if (_playbackIndex != null) {
+      final trail = context.read<DevicesController>().trailFor(id);
+      if (_playbackIndex! < trail.length) {
+        final p = trail[_playbackIndex!];
+        _programmaticMove = true;
+        _mapController.move(LatLng(p.latitude, p.longitude), _mapController.camera.zoom);
+        _programmaticMove = false;
+      }
+      return;
+    }
     final est = _estimators[id];
     if (est == null || !est.hasAnchor) return;
     final target = est.predictAt(DateTime.now());
@@ -87,8 +103,12 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
   Widget build(BuildContext context) {
     return Consumer<DevicesController>(
       builder: (context, controller, _) {
+        final hidden = context.read<HiddenDevicesController>();
+        final visibleDevices = hidden.isShowingHidden
+            ? controller.devices
+            : controller.devices.where((d) => !hidden.isHidden(d.device.id)).toList();
         final devicesWithPos =
-            controller.devices.where((d) => d.hasPosition).toList();
+            visibleDevices.where((d) => d.hasPosition).toList();
 
         _syncEstimators(devicesWithPos);
 
@@ -104,6 +124,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
         return Stack(
           children: [
             FlutterMap(
+              key: ValueKey('map_${widget.remountSignal}'),
               mapController: _mapController,
               options: MapOptions(
                 initialCenter: const LatLng(20.0, 77.0),
@@ -125,10 +146,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                 if (_followingId != null)
                   _buildTrailLayer(context, controller, _followingId!),
                 MarkerLayer(
-                  markers: [
-                    for (final v in devicesWithPos)
-                      _buildMarker(context, v, now),
-                  ],
+                  markers: _buildMarkersWithOffset(context, devicesWithPos, now),
                 ),
               ],
             ),
@@ -143,30 +161,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                       : 'No positions yet',
                 ),
               ),
-            if (_followingId != null)
-              Positioned(
-                top: 16,
-                left: 16,
-                right: 16,
-                child: _FollowingChip(
-                  label: devicesWithPos
-                          .firstWhere(
-                            (d) => d.device.id == _followingId,
-                            orElse: () => devicesWithPos.first,
-                          )
-                          .displayName,
-                  onStop: _stopFollow,
-                  onClearTrail: () {
-                    controller.clearTrail(_followingId!);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Trail cleared'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                ),
-              ),
+
             Positioned(
               right: 16,
               bottom: 100,
@@ -180,6 +175,29 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
                 child: const Icon(Icons.center_focus_strong),
               ),
             ),
+
+            // ── Follow peek sheet ──────────────────────────────────────
+            if (_followingId != null)
+              _FollowPeekSheet(
+                device: devicesWithPos.firstWhere(
+                  (d) => d.device.id == _followingId,
+                  orElse: () => devicesWithPos.first,
+                ),
+                onStop: _stopFollow,
+                onClearTrail: () {
+                  controller.clearTrail(_followingId!);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Trail cleared'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                trail: controller.trailFor(_followingId!),
+                playbackIndex: _playbackIndex,
+                onPlaybackChanged: (i) => setState(() => _playbackIndex = i),
+                bottomPadding: MediaQuery.of(context).viewPadding.bottom + 88,
+              ),
           ],
         );
       },
@@ -225,7 +243,44 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
     return PolylineLayer(polylines: polylines);
   }
 
-  Marker _buildMarker(BuildContext context, DeviceView v, DateTime now) {
+
+  List<Marker> _buildMarkersWithOffset(
+    BuildContext context,
+    List<DeviceView> devices,
+    DateTime now,
+  ) {
+    const thresholdDeg = 0.0002;
+    final offsets = <int, Offset>{};
+
+    for (var i = 0; i < devices.length; i++) {
+      final a = devices[i];
+      if (!a.hasPosition) continue;
+
+      int overlapIndex = 0;
+      for (var j = 0; j < i; j++) {
+        final b = devices[j];
+        if (!b.hasPosition) continue;
+        final dLat = (a.position!.latitude - b.position!.latitude).abs();
+        final dLon = (a.position!.longitude - b.position!.longitude).abs();
+        if (dLat < thresholdDeg && dLon < thresholdDeg) {
+          overlapIndex++;
+        }
+      }
+
+      if (overlapIndex > 0) {
+        final dx = 18.0 * (overlapIndex % 2 == 0 ? 1 : -1);
+        final dy = -14.0 * overlapIndex;
+        offsets[a.device.id] = Offset(dx, dy);
+      }
+    }
+
+    return [
+      for (final v in devices)
+        _buildMarker(context, v, now, pixelOffset: offsets[v.device.id]),
+    ];
+  }
+
+  Marker _buildMarker(BuildContext context, DeviceView v, DateTime now, {Offset? pixelOffset}) {
     final est = _estimators[v.device.id];
     final shown = est?.predictAt(now) ??
         LatLng(v.position!.latitude, v.position!.longitude);
@@ -234,6 +289,9 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       point: shown,
       width: 56,
       height: 56,
+      alignment: pixelOffset != null
+          ? Alignment(pixelOffset.dx / 28, pixelOffset.dy / 28)
+          : Alignment.center,
       child: GestureDetector(
         onTap: () => showDeviceDetailSheet(
           context,
@@ -352,73 +410,245 @@ class _PulsingRingState extends State<_PulsingRing>
   }
 }
 
-class _FollowingChip extends StatelessWidget {
-  final String label;
+class _FollowPeekSheet extends StatelessWidget {
+  final DeviceView device;
   final VoidCallback onStop;
   final VoidCallback onClearTrail;
+  final List<TraccarPosition> trail;
+  final int? playbackIndex;
+  final ValueChanged<int?> onPlaybackChanged;
+  final double bottomPadding;
 
-  const _FollowingChip({
-    required this.label,
+  const _FollowPeekSheet({
+    required this.device,
     required this.onStop,
     required this.onClearTrail,
+    required this.trail,
+    required this.playbackIndex,
+    required this.onPlaybackChanged,
+    required this.bottomPadding,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.max,
-      children: [
-        Expanded(
-          child: Material(
-            color: Colors.blue.shade700,
-            elevation: 3,
-            borderRadius: BorderRadius.circular(20),
-            child: InkWell(
-              onTap: onStop,
-              borderRadius: BorderRadius.circular(20),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.gps_fixed, color: Colors.white, size: 16),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        'Following $label',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.close, color: Colors.white, size: 16),
-                  ],
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final p = device.position;
+    final batt = p?.batteryPercent;
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: bottomPadding,
+      child: Material(
+        color: isDark
+            ? Colors.grey.shade900.withValues(alpha: 0.95)
+            : Colors.white.withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(16),
+        elevation: 6,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle hint
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: scheme.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Material(
-          color: Colors.blue.shade700,
-          elevation: 3,
-          shape: const CircleBorder(),
-          child: InkWell(
-            onTap: onClearTrail,
-            customBorder: const CircleBorder(),
-            child: const Padding(
-              padding: EdgeInsets.all(10),
-              child: Tooltip(
-                message: 'Clear trail',
-                child: Icon(Icons.timeline, color: Colors.white, size: 18),
+              // Main row: avatar + info + actions
+              Row(
+                children: [
+                  DeviceAvatar(
+                    avatarId: device.device.avatarId,
+                    colorHex: device.device.colorHex,
+                    size: 40,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                device.displayName,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (device.isLive) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade600,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Text(
+                                  'LIVE',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            if (p != null) ...[
+                              Text(
+                                _relative(p.fixTime),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                              if (batt != null) ...[
+                                Text(
+                                  ' · ',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                Icon(
+                                  batt < 20
+                                      ? Icons.battery_alert
+                                      : Icons.battery_std,
+                                  size: 12,
+                                  color: batt < 20
+                                      ? Colors.red
+                                      : scheme.onSurfaceVariant,
+                                ),
+                                Text(
+                                  ' $batt%',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: batt < 20
+                                        ? Colors.red
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                              if (p.speed > 1) ...[
+                                Text(
+                                  ' · ${(p.speed * 3.6).toStringAsFixed(0)} km/h',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ],
+                            if (p == null)
+                              Text(
+                                'No position',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Actions
+                  IconButton(
+                    icon: const Icon(Icons.timeline_rounded, size: 20),
+                    tooltip: 'Clear trail',
+                    onPressed: onClearTrail,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    tooltip: 'Stop following',
+                    onPressed: onStop,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
               ),
-            ),
+              // ── History playback slider ──────────────────────────
+              if (trail.length >= 2)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.history, size: 14),
+                          const SizedBox(width: 4),
+                          Text(
+                            playbackIndex != null
+                                ? 'History ${playbackIndex! + 1}/${trail.length}'
+                                : 'Playback (${trail.length} pts)',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          if (playbackIndex != null)
+                            GestureDetector(
+                              onTap: () => onPlaybackChanged(null),
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(Icons.close_rounded,
+                                    size: 14, color: scheme.primary),
+                              ),
+                            ),
+                        ],
+                      ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3,
+                          thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 7),
+                          overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 14),
+                        ),
+                        child: Slider(
+                          value: (playbackIndex ?? 0).toDouble(),
+                          min: 0,
+                          max: (trail.length - 1).toDouble(),
+                          divisions: trail.length - 1,
+                          label: playbackIndex != null
+                              ? _relative(trail[playbackIndex!].fixTime)
+                              : null,
+                          onChanged: (v) =>
+                              onPlaybackChanged(v.round()),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ),
-      ],
+      ),
     );
+  }
+
+  String _relative(DateTime t) {
+    final diff = DateTime.now().difference(t.toLocal());
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return DateFormat.Hm().format(t.toLocal());
   }
 }

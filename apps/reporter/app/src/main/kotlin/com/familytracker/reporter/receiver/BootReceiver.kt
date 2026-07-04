@@ -7,6 +7,7 @@ import android.util.Log
 import com.familytracker.reporter.ApprovalStatus
 import com.familytracker.reporter.Storage
 import com.familytracker.reporter.service.LocationForegroundService
+import com.familytracker.reporter.service.WatchdogWorker
 
 class BootReceiver : BroadcastReceiver() {
 
@@ -21,6 +22,7 @@ class BootReceiver : BroadcastReceiver() {
         if (storage.approval == ApprovalStatus.APPROVED) {
             Log.i(tag, "Starting foreground service after boot")
             LocationForegroundService.start(context)
+            WatchdogWorker.schedule(context)
         } else {
             Log.i(tag, "Not approved; skipping service start")
         }

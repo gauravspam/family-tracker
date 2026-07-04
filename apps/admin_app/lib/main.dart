@@ -13,7 +13,9 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/server_setup_screen.dart';
 import 'state/devices_controller.dart';
+import 'state/hidden_devices_controller.dart';
 import 'state/pending_controller.dart';
+import 'state/theme_controller.dart';
 import 'ws/traccar_socket.dart';
 
 void main() {
@@ -30,6 +32,7 @@ class AdminApp extends StatefulWidget {
 
 class _AdminAppState extends State<AdminApp> {
   ServerUrls? _urls;
+  final _themeController = ThemeController();
   bool _loaded = false;
 
   @override
@@ -52,6 +55,13 @@ class _AdminAppState extends State<AdminApp> {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _themeController,
+      builder: (context, _) => _buildApp(context),
+    );
+  }
+
+  Widget _buildApp(BuildContext context) {
     final theme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF007AFF), // iOS system blue
@@ -86,7 +96,7 @@ class _AdminAppState extends State<AdminApp> {
         title: 'Family Tracker Admin',
         theme: theme,
         darkTheme: darkTheme,
-        themeMode: ThemeMode.system,
+        themeMode: _themeController.mode,
         home: const Scaffold(body: Center(child: CircularProgressIndicator())),
       );
     }
@@ -96,7 +106,7 @@ class _AdminAppState extends State<AdminApp> {
         title: 'Family Tracker Admin',
         theme: theme,
         darkTheme: darkTheme,
-        themeMode: ThemeMode.system,
+        themeMode: _themeController.mode,
         home: ServerSetupScreen(
           onSaved: _onServerChanged,
         ),
@@ -109,6 +119,7 @@ class _AdminAppState extends State<AdminApp> {
       onServerChanged: _onServerChanged,
       theme: theme,
       darkTheme: darkTheme,
+      themeController: _themeController,
     );
   }
 }
@@ -121,6 +132,7 @@ class _ConfiguredApp extends StatefulWidget {
   final void Function(ServerUrls) onServerChanged;
   final ThemeData theme;
   final ThemeData darkTheme;
+  final ThemeController themeController;
 
   const _ConfiguredApp({
     super.key,
@@ -128,6 +140,7 @@ class _ConfiguredApp extends StatefulWidget {
     required this.onServerChanged,
     required this.theme,
     required this.darkTheme,
+    required this.themeController,
   });
 
   @override
@@ -182,12 +195,14 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
         ChangeNotifierProvider(create: (_) => DevicesController(_traccarApi, _relayApi)),
         ChangeNotifierProvider(create: (_) => PendingController(_relayApi)),
         ChangeNotifierProvider<TraccarSocket>.value(value: _socket),
+        ChangeNotifierProvider<ThemeController>.value(value: widget.themeController),
+        ChangeNotifierProvider(create: (_) => HiddenDevicesController()),
       ],
       child: MaterialApp(
         title: 'Family Tracker Admin',
         theme: widget.theme,
         darkTheme: widget.darkTheme,
-        themeMode: ThemeMode.system,
+        themeMode: widget.themeController.mode,
         home: const _RootRouter(),
       ),
     );

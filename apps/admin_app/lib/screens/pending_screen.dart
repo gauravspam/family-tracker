@@ -207,7 +207,7 @@ class _PendingScreenState extends State<PendingScreen> with WidgetsBindingObserv
   Widget _buildList(List<PendingDevice> items) {
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(top: 90, bottom: 100),
+      padding: const EdgeInsets.only(top: 110, bottom: 100),
       itemCount: items.length,
       itemBuilder: (context, i) => _PendingTile(
         device: items[i],

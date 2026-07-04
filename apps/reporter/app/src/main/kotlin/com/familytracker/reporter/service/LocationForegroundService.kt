@@ -22,6 +22,7 @@ import com.familytracker.reporter.ApprovalStatus
 import com.familytracker.reporter.Storage
 import com.familytracker.reporter.TrackingMode
 import com.familytracker.reporter.net.OsmAndClient
+import com.familytracker.reporter.net.PositionQueue
 import com.familytracker.reporter.net.RelayClient
 import com.familytracker.reporter.ui.MainActivity
 import com.google.android.gms.location.LocationCallback
@@ -45,6 +46,7 @@ class LocationForegroundService : Service() {
     private lateinit var storage: Storage
     private lateinit var osmand: OsmAndClient
     private lateinit var relay: RelayClient
+    private lateinit var positionQueue: PositionQueue
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentInterval: Long = IDLE_INTERVAL_MS
@@ -71,12 +73,13 @@ class LocationForegroundService : Service() {
         storage = Storage(this)
         osmand = OsmAndClient()
         relay = RelayClient()
+        positionQueue = PositionQueue(this)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(tag, "Service started")
-        startForegroundWithNotification("Location service active")
+        startForegroundWithNotification()
         applyInterval()
         startPollLoop()
         return START_STICKY
@@ -154,21 +157,40 @@ class LocationForegroundService : Service() {
         val course = if (loc.hasBearing()) loc.bearing else 0f
 
         scope.launch {
+            // Build the URL for this position (used for both live post and queue)
+            val posUrl = buildString {
+                append(url.trimEnd('/'))
+                append("/?id=").append(token)
+                append("&lat=").append(loc.latitude)
+                append("&lon=").append(loc.longitude)
+                append("&timestamp=").append(loc.time / 1000L)
+                append("&hdop=").append(loc.accuracy)
+                append("&altitude=").append(if (loc.hasAltitude()) loc.altitude else 0.0)
+                append("&speed=").append(if (loc.hasSpeed()) loc.speed else 0f)
+                append("&bearing=").append(course)
+                if (batt != null) append("&batt=").append(batt)
+            }
+
             try {
-                osmand.postPosition(
-                    ingestUrl = url,
-                    ingestToken = token,
-                    latitude = loc.latitude,
-                    longitude = loc.longitude,
-                    timestampEpochSec = loc.time / 1000L,
-                    accuracyMeters = loc.accuracy,
-                    altitudeMeters = if (loc.hasAltitude()) loc.altitude else 0.0,
-                    speedMs = if (loc.hasSpeed()) loc.speed else 0f,
-                    courseDeg = course,
-                    batteryPercent = batt,
-                )
+                osmand.postUrl(posUrl)
+
+                // Success — try to flush any queued positions
+                val queued = positionQueue.drainAll()
+                if (queued.isNotEmpty()) {
+                    Log.i(tag, "Flushing ${queued.size} queued positions")
+                    for (qUrl in queued) {
+                        try {
+                            osmand.postUrl(qUrl)
+                        } catch (e: Exception) {
+                            // Re-queue failures
+                            positionQueue.enqueue(qUrl)
+                            break // Stop flushing on first failure
+                        }
+                    }
+                }
             } catch (e: Exception) {
-                Log.w(tag, "Post failed", e)
+                Log.w(tag, "Post failed; queuing position")
+                positionQueue.enqueue(posUrl)
             }
         }
     }
@@ -254,7 +276,7 @@ class LocationForegroundService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Location Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Persistent notification for background location tracking"
                 setShowBadge(false)
@@ -264,7 +286,7 @@ class LocationForegroundService : Service() {
         }
     }
 
-    private fun startForegroundWithNotification(text: String) {
+    private fun startForegroundWithNotification() {
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -275,12 +297,14 @@ class LocationForegroundService : Service() {
 
         val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("Recorder")
-            .setContentText(text)
+            .setContentTitle(" ")
+            .setContentText(" ") // zero-width space — invisible but satisfies Android's requirement
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentIntent(pi)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setShowWhen(false)
+            .setSilent(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -298,9 +322,9 @@ class LocationForegroundService : Service() {
         private const val CHANNEL_ID = "reporter_location"
         private const val NOTIFICATION_ID = 1
 
-        private const val IDLE_INTERVAL_MS = 30_000L
+        private const val IDLE_INTERVAL_MS = 600_000L  // 10 minutes
         private const val LIVE_INTERVAL_MS = 5_000L
-        private const val POLL_INTERVAL_MS = 60_000L  // 1 minute for testing
+        private const val POLL_INTERVAL_MS = 300_000L  // 5 minutes
 
         fun start(context: Context) {
             val intent = Intent(context, LocationForegroundService::class.java)

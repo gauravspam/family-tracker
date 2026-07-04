@@ -21,6 +21,7 @@ class TraccarSocket extends ChangeNotifier {
   StreamSubscription<dynamic>? _subscription;
   Timer? _reconnectTimer;
   int _reconnectAttempt = 0;
+  bool _disposed = false;
 
   final _positionsController = StreamController<List<Map<String, dynamic>>>.broadcast();
   final _eventsController = StreamController<List<Map<String, dynamic>>>.broadcast();
@@ -75,6 +76,7 @@ class TraccarSocket extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _disposed = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _reconnectAttempt = 0;
@@ -136,6 +138,7 @@ class TraccarSocket extends ChangeNotifier {
   }
 
   void _scheduleReconnect() {
+    if (_disposed) return;
     _setState(SocketState.reconnecting);
     _reconnectAttempt++;
 
@@ -156,6 +159,7 @@ class TraccarSocket extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _reconnectTimer?.cancel();
     _closeChannel();
     _positionsController.close();

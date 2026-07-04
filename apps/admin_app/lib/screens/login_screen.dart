@@ -56,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _validateToken(String? v) {
     final s = v?.trim() ?? '';
     if (s.isEmpty) return 'Relay admin token is required';
-    if (s.length < 20) return 'Token looks too short';
+    if (s.length < 3) return 'Token looks too short';
     return null;
   }
 

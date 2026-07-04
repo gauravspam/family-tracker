@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../api/relay_api.dart';
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../state/devices_controller.dart';
+import '../state/hidden_devices_controller.dart';
 import '../state/pending_controller.dart';
+import '../state/theme_controller.dart';
+import '../ws/traccar_socket.dart';
 import 'about_screen.dart';
 import 'devices_screen.dart';
 import 'map_screen.dart';
@@ -23,6 +28,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   int _currentTab = 1;
+  int _mapRemountSignal = 0;
+  Timer? _pendingTimer;
 
   static const _tabs = [
     _TabMeta(icon: Icons.list_alt_rounded, label: 'Devices'),
@@ -34,25 +41,340 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: 1);
+    _startPendingTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _listenToHiddenChanges();
+    });
   }
 
   @override
   void dispose() {
+    _pendingTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
 
-  void _onTabTapped(int index) {
+  void _listenToHiddenChanges() {
+    final hidden = context.read<HiddenDevicesController>();
+    hidden.addListener(_onHiddenChanged);
+  }
+
+  void _onHiddenChanged() {
+    if (_currentTab == 0) {
+      context.read<DevicesController>().refresh();
+    }
+  }
+
+  void _startPendingTimer() {
+    _pendingTimer?.cancel();
+    _pendingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      if (_currentTab == 2) {
+        context.read<PendingController>().refresh();
+      }
+    });
+  }
+
+  Future<void> _onTabTapped(int index) async {
+    HapticFeedback.mediumImpact();
     setState(() => _currentTab = index);
-    _pageController.animateToPage(
+    await _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
     );
+    if (mounted) setState(() => _mapRemountSignal++);
+    _onTabSelected(index);
   }
 
   void _onPageChanged(int index) {
-    setState(() => _currentTab = index);
+    setState(() {
+      _currentTab = index;
+      _mapRemountSignal++;
+    });
+    _onTabSelected(index);
+  }
+
+  void _onTabSelected(int index) {
+    Future.microtask(() {
+      if (!mounted) return;
+      switch (index) {
+        case 0:
+          context.read<DevicesController>().refresh();
+        case 2:
+          context.read<PendingController>().refresh();
+      }
+    });
+  }
+
+  void _showThemeDialog(BuildContext ctx) {
+    final controller = ctx.read<ThemeController>();
+    showDialog(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Theme'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final entry in [
+              (ThemeMode.system, 'System', Icons.settings_brightness),
+              (ThemeMode.light, 'Light', Icons.light_mode),
+              (ThemeMode.dark, 'Dark', Icons.dark_mode),
+            ])
+              ListTile(
+                leading: Icon(entry.$3),
+                title: Text(entry.$2),
+                trailing: controller.mode == entry.$1
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () {
+                  controller.setMode(entry.$1);
+                  Navigator.pop(dCtx);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showManageHidden(BuildContext ctx) {
+    final hidden = ctx.read<HiddenDevicesController>();
+
+    if (!hidden.hasPasscode) {
+      _showSetPasscodeDialog(ctx, hidden);
+      return;
+    }
+
+    _requirePasscode(ctx, hidden, () {
+      final devices = ctx.read<DevicesController>();
+      showDialog(
+        context: ctx,
+        builder: (dCtx) => AlertDialog(
+          title: const Text('Manage Hidden'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: devices.devices.isEmpty
+                ? const Text('No devices yet.')
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final d in devices.devices)
+                        CheckboxListTile(
+                          title: Text(d.displayName),
+                          subtitle: Text(d.device.uniqueId),
+                          value: hidden.isHidden(d.device.id),
+                          onChanged: (_) {
+                            hidden.toggleHidden(d.device.id);
+                            Navigator.pop(dCtx);
+                          },
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dCtx);
+                _showSetPasscodeDialog(ctx, hidden);
+              },
+              child: const Text('Change Passcode'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dCtx),
+              child: const Text('Done'),
+            ),
+          ],
+      ),
+    );
+  });
+  }
+
+  void _requirePasscode(BuildContext ctx, HiddenDevicesController hidden, VoidCallback onVerified) {
+    final codeController = TextEditingController();
+    showDialog(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Enter Passcode'),
+        content: TextField(
+          controller: codeController,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(
+            labelText: 'Passcode',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) {
+            if (hidden.verifyPasscode(v)) {
+              Navigator.pop(dCtx);
+              onVerified();
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (hidden.verifyPasscode(codeController.text)) {
+                Navigator.pop(dCtx);
+                onVerified();
+              } else {
+                ScaffoldMessenger.of(dCtx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Incorrect passcode'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Unlock'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showShowHiddenDialog(BuildContext ctx) {
+    final hidden = ctx.read<HiddenDevicesController>();
+
+    if (!hidden.hasPasscode) {
+      _showSetPasscodeDialog(ctx, hidden);
+      return;
+    }
+
+    if (hidden.isShowingHidden) {
+      hidden.hideHidden();
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Hidden devices hidden')),
+      );
+      return;
+    }
+
+    final codeController = TextEditingController();
+    showDialog(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Enter Passcode'),
+        content: TextField(
+          controller: codeController,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(
+            labelText: 'Passcode',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) {
+            if (hidden.verifyPasscode(v)) {
+              hidden.showHidden();
+              Navigator.pop(dCtx);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (hidden.verifyPasscode(codeController.text)) {
+                hidden.showHidden();
+                Navigator.pop(dCtx);
+              } else {
+                ScaffoldMessenger.of(dCtx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Incorrect passcode'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Unlock'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSetPasscodeDialog(BuildContext ctx, HiddenDevicesController hidden) {
+    final codeController = TextEditingController();
+    final confirmController = TextEditingController();
+
+    showDialog(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Set Passcode'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeController,
+              autofocus: true,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: const InputDecoration(
+                labelText: 'New passcode (4-6 digits)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: confirmController,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: const InputDecoration(
+                labelText: 'Confirm passcode',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final code = codeController.text;
+              if (code.length < 4) {
+                ScaffoldMessenger.of(dCtx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Passcode must be 4-6 digits'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+              if (code != confirmController.text) {
+                ScaffoldMessenger.of(dCtx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Passcodes do not match'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+              hidden.setPasscode(code);
+              Navigator.pop(dCtx);
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('Passcode set')),
+              );
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _refresh() async {
@@ -87,9 +409,9 @@ class _HomeScreenState extends State<HomeScreen> {
             physics: _currentTab == 1
                 ? const NeverScrollableScrollPhysics()
                 : const BouncingScrollPhysics(),
-            children: const [
+            children: [
               DevicesScreen(),
-              MapScreen(),
+              MapScreen(remountSignal: _mapRemountSignal),
               PendingScreen(),
             ],
           ),
@@ -102,6 +424,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: _FloatingHeader(
               title: _tabs[_currentTab].label,
               onRefresh: _refresh,
+              onTheme: () => _showThemeDialog(context),
+              onManageHidden: () => _showManageHidden(context),
+              onShowHidden: () => _showShowHiddenDialog(context),
               onAbout: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const AboutScreen()),
@@ -134,6 +459,9 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
+
+          // ── Geofence alerts ──────────────────────────────────────
+          const _GeofenceAlertLayer(),
 
           // ── Nav pill ──────────────────────────────────────────────
           Positioned(
@@ -168,12 +496,18 @@ class _TabMeta {
 class _FloatingHeader extends StatelessWidget {
   final String title;
   final VoidCallback onRefresh;
+  final VoidCallback onTheme;
+  final VoidCallback onManageHidden;
+  final VoidCallback onShowHidden;
   final VoidCallback onAbout;
   final VoidCallback onSignOut;
 
   const _FloatingHeader({
     required this.title,
     required this.onRefresh,
+    required this.onTheme,
+    required this.onManageHidden,
+    required this.onShowHidden,
     required this.onAbout,
     required this.onSignOut,
   });
@@ -186,7 +520,7 @@ class _FloatingHeader extends StatelessWidget {
 
     return ClipRRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
         child: Container(
           padding: EdgeInsets.only(
             top: topPadding + 8,
@@ -195,7 +529,7 @@ class _FloatingHeader extends StatelessWidget {
             bottom: 12,
           ),
           decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: isDark ? 0.4 : 0.25),
+            color: scheme.surface.withValues(alpha: isDark ? 0.25 : 0.2),
           ),
           child: Row(
             children: [
@@ -214,14 +548,43 @@ class _FloatingHeader extends StatelessWidget {
               ),
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert_rounded, size: 22),
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                color: scheme.surface,
                 onSelected: (choice) {
+                  if (choice == 'theme') onTheme();
+                  if (choice == 'manage_hidden') onManageHidden();
+                  if (choice == 'show_hidden') onShowHidden();
                   if (choice == 'about') onAbout();
                   if (choice == 'signout') onSignOut();
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'about', child: Text('About & Server')),
-                  PopupMenuItem(value: 'signout', child: Text('Sign out')),
-                ],
+                itemBuilder: (_) {
+                  final hidden = context.read<HiddenDevicesController>();
+                  return [
+                    const PopupMenuItem(
+                      value: 'theme',
+                      child: Text('Theme'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'manage_hidden',
+                      child: Text('Manage Hidden'),
+                    ),
+                    PopupMenuItem(
+                      value: 'show_hidden',
+                      child: Text(hidden.isShowingHidden ? 'Hide Hidden' : 'Show Hidden'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'about',
+                      child: Text('About & Server'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'signout',
+                      child: Text('Sign out'),
+                    ),
+                  ];
+                },
               ),
             ],
           ),
@@ -253,19 +616,25 @@ class _PillNav extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        filter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
         child: Container(
-          height: 60,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           decoration: BoxDecoration(
             color: isDark
-                ? Colors.grey.shade900.withValues(alpha: 0.85)
-                : Colors.white.withValues(alpha: 0.85),
+                ? Colors.grey.shade900.withValues(alpha: 0.4)
+                : Colors.white.withValues(alpha: 0.4),
             borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.1)
+                  : Colors.black.withValues(alpha: 0.05),
+              width: 0.5,
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
-                blurRadius: 12,
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 20,
+                spreadRadius: 2,
                 offset: const Offset(0, 4),
               ),
             ],
@@ -328,8 +697,8 @@ class _PillNavItem extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
           color: selected
               ? scheme.primaryContainer.withValues(alpha: isDark ? 0.3 : 0.5)
@@ -341,8 +710,8 @@ class _PillNavItem extends StatelessWidget {
           children: [
             Badge(
               isLabelVisible: badge != null && badge! > 0,
-              label: badge != null ? Text('$badge') : null,
-              child: Icon(icon, color: iconColor, size: 22),
+              label: badge != null ? Text('$badge', style: const TextStyle(fontSize: 10)) : null,
+              child: Icon(icon, color: iconColor, size: 20),
             ),
             const SizedBox(height: 2),
             Text(
@@ -358,4 +727,59 @@ class _PillNavItem extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Geofence alert layer ────────────────────────────────────────────
+
+class _GeofenceAlertLayer extends StatefulWidget {
+  const _GeofenceAlertLayer();
+
+  @override
+  State<_GeofenceAlertLayer> createState() => _GeofenceAlertLayerState();
+}
+
+class _GeofenceAlertLayerState extends State<_GeofenceAlertLayer> {
+  StreamSubscription<List<Map<String, dynamic>>>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _listen());
+  }
+
+  void _listen() {
+    final socket = context.read<TraccarSocket>();
+    _sub = socket.events.listen(_onEvent);
+  }
+
+  void _onEvent(List<Map<String, dynamic>> events) {
+    for (final e in events) {
+      final type = e['type'] as String?;
+      final geofenceId = e['geofenceId'];
+      if (type == null || geofenceId == null) continue;
+      if (type.startsWith('geofence')) {
+        HapticFeedback.heavyImpact();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '${type == "geofenceEnter" ? "Entered" : "Exited"} geofence #$geofenceId',
+              ),
+              duration: const Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

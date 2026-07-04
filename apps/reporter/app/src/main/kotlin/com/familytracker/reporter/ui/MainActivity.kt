@@ -19,6 +19,7 @@ import com.familytracker.reporter.ApprovalStatus
 import com.familytracker.reporter.Storage
 import com.familytracker.reporter.net.RelayClient
 import com.familytracker.reporter.service.LocationForegroundService
+import com.familytracker.reporter.service.WatchdogWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -148,6 +149,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun onApproved() {
         LocationForegroundService.start(this)
+        WatchdogWorker.schedule(this)
         stopPolling()
         cancelRegistration()
 

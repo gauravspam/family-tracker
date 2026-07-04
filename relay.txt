@@ -1,0 +1,5 @@
+cd ~/family-tracker/services/notify_relay
+set -a
+source ~/family-tracker/.env.relay
+set +a
+go run ./cmd/server

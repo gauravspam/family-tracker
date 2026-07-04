@@ -176,6 +176,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final relay = context.read<RelayApi>();
+    final devices = context.read<DevicesController>();
 
     try {
       final expiresAt = DateTime.now().toUtc().add(Duration(minutes: minutes));
@@ -183,6 +184,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
         traccarDeviceId: view.device.id,
         expiresAtUtc: expiresAt,
       );
+      await devices.refresh();
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(
@@ -334,214 +336,510 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   @override
   Widget build(BuildContext context) {
     final p = view.position;
+    final scheme = Theme.of(context).colorScheme;
 
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
         right: 16,
-        top: 8,
+        top: 4,
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: _busy ? null : _editAppearance,
-                child: DeviceAvatar(
-                  avatarId: _avatarId,
-                  colorHex: _colorHex,
-                  size: 48,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          view.isOnline ? Icons.circle : Icons.circle_outlined,
-                          color: view.isOnline ? Colors.green : Colors.grey,
-                          size: 10,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            _displayName,
-                            style: Theme.of(context).textTheme.titleLarge,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Hero section ──────────────────────────────────────────
+            Row(
+              children: [
+                GestureDetector(
+                  onTap: _busy ? null : _editAppearance,
+                  child: Stack(
+                    children: [
+                      DeviceAvatar(
+                        avatarId: _avatarId,
+                        colorHex: _colorHex,
+                        size: 48,
+                      ),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: view.isOnline ? Colors.green : Colors.grey,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: scheme.surface, width: 2),
                           ),
                         ),
-                      ],
-                    ),
-                    TextButton.icon(
-                      onPressed: _busy ? null : _editAppearance,
-                      icon: const Icon(Icons.palette_outlined, size: 16),
-                      label: const Text('Change avatar & color'),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(0, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _displayName,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        view.isOnline ? 'Online now' : 'Offline',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: view.isOnline
+                              ? Colors.green.shade600
+                              : Colors.grey,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _IconButton(
+                      icon: Icons.palette_outlined,
+                      tooltip: 'Appearance',
+                      onPressed: _busy ? null : _editAppearance,
+                    ),
+                    const SizedBox(width: 4),
+                    _IconButton(
+                      icon: Icons.edit_outlined,
+                      tooltip: 'Rename',
+                      onPressed: _busy ? null : _rename,
                     ),
                   ],
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.edit_outlined),
-                tooltip: 'Rename',
-                onPressed: _busy ? null : _rename,
+              ],
+            ),
+
+            // ── Live banner ──────────────────────────────────────────
+            if (view.isLive) ...[
+              const SizedBox(height: 10),
+              _LiveBanner(expiresAt: view.liveExpiresAt),
+            ],
+
+            // ── Info card ────────────────────────────────────────────
+            const SizedBox(height: 14),
+            _Card(
+              children: [
+                _InfoRow(
+                  icon: Icons.tag,
+                  label: 'ID',
+                  value: view.device.id.toString(),
+                ),
+                _Divider(),
+                _InfoRow(
+                  icon: Icons.info_outline,
+                  label: 'Status',
+                  value: view.device.status,
+                ),
+              ],
+            ),
+
+            // ── Position card ────────────────────────────────────────
+            if (p != null) ...[
+              const SizedBox(height: 10),
+              _Card(
+                children: [
+                  _InfoRow(
+                    icon: Icons.location_on_outlined,
+                    label: 'Coordinates',
+                    value: '${p.latitude.toStringAsFixed(5)}, ${p.longitude.toStringAsFixed(5)}',
+                    copyable: true,
+                  ),
+                  _Divider(),
+                  _AddressRow(latitude: p.latitude, longitude: p.longitude),
+                  if (p.speed > 0) ...[
+                    _Divider(),
+                    _InfoRow(
+                      icon: Icons.speed,
+                      label: 'Speed',
+                      value: '${(p.speed * 3.6).toStringAsFixed(1)} km/h',
+                    ),
+                  ],
+                  _Divider(),
+                  _InfoRow(
+                    icon: Icons.sensors,
+                    label: 'Accuracy',
+                    value: '${p.accuracy.toStringAsFixed(0)} m',
+                  ),
+                  if (p.batteryPercent != null) ...[
+                    _Divider(),
+                    _InfoRow(
+                      icon: p.isLowBattery
+                          ? Icons.battery_alert
+                          : Icons.battery_std,
+                      label: 'Battery',
+                      value: '${p.batteryPercent}%',
+                      valueColor: p.isLowBattery ? Colors.red : null,
+                    ),
+                  ],
+                ],
               ),
             ],
-          ),
-          if (view.isLive) ...[
-            const SizedBox(height: 8),
-            _LiveBanner(expiresAt: view.liveExpiresAt),
-          ],
-          const SizedBox(height: 12),
-          _InfoRow(label: 'Traccar ID', value: view.device.id.toString()),
-          _InfoRow(
-            label: 'Unique ID',
-            value: view.device.uniqueId,
-            monospace: true,
-          ),
-          _InfoRow(label: 'Status', value: view.device.status),
-          if (p != null) ...[
-            const Divider(height: 24),
-            _CopyableInfoRow(
-              label: 'Last position',
-              value: '${p.latitude.toStringAsFixed(5)}, '
-                  '${p.longitude.toStringAsFixed(5)}',
-            ),
-            _AddressRow(latitude: p.latitude, longitude: p.longitude),
-            _InfoRow(
-              label: 'Accuracy',
-              value: '${p.accuracy.toStringAsFixed(0)} m',
-            ),
-            _InfoRow(
-              label: 'Speed',
-              value: '${(p.speed * 3.6).toStringAsFixed(1)} km/h',
-            ),
-            _InfoRow(
-              label: 'Fix time',
-              value: p.fixTime.toLocal().toString(),
-            ),
-            if (p.batteryPercent != null)
-              _InfoRow(
-                label: 'Battery',
-                value: '${p.batteryPercent}%'
-                    '${p.isLowBattery ? " ⚠️ low" : ""}',
-              ),
-          ],
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: view.isLive
-                ? FilledButton.icon(
-                    onPressed: _busy ? null : _stopLive,
-                    icon: const Icon(Icons.stop_circle_outlined),
-                    label: const Text('Stop Live'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  )
-                : FilledButton.icon(
-                    onPressed: _busy ? null : _triggerLive,
-                    icon: const Icon(Icons.gps_fixed),
-                    label: const Text('Track Live'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  ),
-          ),
-          if (widget.onFollow != null && view.position != null) ...[
-            const SizedBox(height: 8),
+
+            const SizedBox(height: 16),
+            // ── Primary action ───────────────────────────────────────
             SizedBox(
               width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _busy
+              child: view.isLive
+                  ? _PrimaryButton(
+                      onPressed: _busy ? null : _stopLive,
+                      icon: Icons.stop_circle_outlined,
+                      label: 'Stop Live',
+                      destructive: true,
+                    )
+                  : _PrimaryButton(
+                      onPressed: _busy ? null : _triggerLive,
+                      icon: Icons.gps_fixed,
+                      label: 'Track Live',
+                    ),
+            ),
+
+            // ── Secondary actions ────────────────────────────────────
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _SecondaryButton(
+                  icon: Icons.directions_rounded,
+                  label: 'Route',
+                  onTap: (_busy || view.position == null) ? null : _openDirections,
+                ),
+                const SizedBox(width: 8),
+                _SecondaryButton(
+                  icon: Icons.notifications_active_outlined,
+                  label: 'Ring',
+                  onTap: _busy ? null : _ring,
+                ),
+                const SizedBox(width: 8),
+                _SecondaryButton(
+                  icon: Icons.delete_outline_rounded,
+                  label: 'Remove',
+                  onTap: _busy ? null : _remove,
+                  destructive: true,
+                ),
+              ],
+            ),
+
+            // ── Tertiary actions ─────────────────────────────────────
+            if (widget.onFollow != null && view.position != null) ...[
+              const SizedBox(height: 8),
+              _TertiaryButton(
+                icon: Icons.my_location,
+                label: 'Follow on map',
+                onTap: _busy
                     ? null
                     : () {
                         Navigator.of(context).pop();
                         widget.onFollow!(view.device.id);
                       },
-                icon: const Icon(Icons.my_location),
-                label: const Text('Follow on map'),
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _ActionChip(
-                icon: Icons.directions_rounded,
-                label: 'Route',
-                onTap: (_busy || view.position == null) ? null : _openDirections,
-              ),
-              _ActionChip(
-                icon: Icons.notifications_active_outlined,
-                label: 'Ring',
-                onTap: _busy ? null : _ring,
-              ),
-              _ActionChip(
-                icon: Icons.delete_outline_rounded,
-                label: 'Remove',
-                onTap: _busy ? null : _remove,
-                color: Colors.red,
               ),
             ],
-          ),
-          if (_busy) ...[
-            const SizedBox(height: 12),
-            const LinearProgressIndicator(),
+            const SizedBox(height: 8),
+
+            // ── Busy indicator ───────────────────────────────────────
+            if (_busy) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(),
+            ],
+            const SizedBox(height: 8),
           ],
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Apple-style components ─────────────────────────────────────────────
+
+class _Card extends StatelessWidget {
+  final List<Widget> children;
+  const _Card({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: children,
+      ),
+    );
+  }
+}
+
+class _Divider extends StatelessWidget {
+  const _Divider();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.only(left: 44),
+      child: Divider(
+        height: 0,
+        thickness: 0.5,
+        color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.06),
       ),
     );
   }
 }
 
 class _InfoRow extends StatelessWidget {
+  final IconData icon;
   final String label;
   final String value;
-  final bool monospace;
+  final bool copyable;
+  final Color? valueColor;
 
   const _InfoRow({
+    required this.icon,
     required this.label,
     required this.value,
-    this.monospace = false,
+    this.copyable = false,
+    this.valueColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 12),
           SizedBox(
-            width: 110,
+            width: 88,
             child: Text(
               label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey,
-                  ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
               style: TextStyle(
-                fontFamily: monospace ? 'monospace' : null,
+                fontSize: 14,
+                color: scheme.onSurfaceVariant,
               ),
             ),
           ),
+          Expanded(
+            child: copyable
+                ? GestureDetector(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: value));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            value,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: valueColor ?? scheme.onSurface,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(Icons.copy_outlined, size: 14, color: scheme.onSurfaceVariant),
+                      ],
+                    ),
+                  )
+                : SelectableText(
+                    value,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: valueColor ?? scheme.onSurface,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _IconButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  const _IconButton({
+    required this.icon,
+    required this.tooltip,
+    this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Opacity(
+      opacity: onPressed == null ? 0.4 : 1.0,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: scheme.primary),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryButton extends StatelessWidget {
+  final VoidCallback? onPressed;
+  final IconData icon;
+  final String label;
+  final bool destructive;
+
+  const _PrimaryButton({
+    this.onPressed,
+    required this.icon,
+    required this.label,
+    this.destructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Opacity(
+      opacity: onPressed == null ? 0.4 : 1.0,
+      child: SizedBox(
+        width: double.infinity,
+        child: TextButton(
+          onPressed: onPressed,
+          style: TextButton.styleFrom(
+            backgroundColor: destructive
+                ? Colors.red.withValues(alpha: 0.15)
+                : scheme.primary,
+            foregroundColor: destructive ? Colors.red : scheme.onPrimary,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 20),
+              const SizedBox(width: 8),
+              Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SecondaryButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool destructive;
+
+  const _SecondaryButton({
+    required this.icon,
+    required this.label,
+    this.onTap,
+    this.destructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fg = destructive ? Colors.red : scheme.primary;
+
+    return Expanded(
+      child: Opacity(
+        opacity: onTap == null ? 0.4 : 1.0,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: fg.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: fg, size: 24),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TertiaryButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  const _TertiaryButton({
+    required this.icon,
+    required this.label,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Opacity(
+      opacity: onTap == null ? 0.4 : 1.0,
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: onTap,
+          icon: Icon(icon, size: 18),
+          label: Text(label),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: scheme.onSurfaceVariant,
+            side: BorderSide(color: scheme.outlineVariant),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
       ),
     );
   }
@@ -645,68 +943,6 @@ class _LiveBannerState extends State<_LiveBanner> {
             child: Text(
               'LIVE mode active · $detail',
               style: TextStyle(color: Colors.green.shade800, fontSize: 13),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CopyableInfoRow extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _CopyableInfoRow({required this.label, required this.value});
-
-  Future<void> _copy(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: value));
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Copied to clipboard'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey,
-                  ),
-            ),
-          ),
-          Expanded(
-            child: InkWell(
-              onTap: () => _copy(context),
-              borderRadius: BorderRadius.circular(4),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Flexible(child: Text(value)),
-                    const SizedBox(width: 6),
-                    Icon(
-                      Icons.copy_outlined,
-                      size: 14,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
         ],
@@ -890,6 +1126,7 @@ class _AddressRowState extends State<_AddressRow> {
   String? _address;
   bool _loading = true;
   bool _failed = false;
+  bool _expanded = false;
 
   @override
   void initState() {
@@ -906,6 +1143,7 @@ class _AddressRowState extends State<_AddressRow> {
         _address = null;
         _loading = true;
         _failed = false;
+        _expanded = false;
       });
       _lookup();
     }
@@ -924,10 +1162,7 @@ class _AddressRowState extends State<_AddressRow> {
 
   @override
   Widget build(BuildContext context) {
-    final label = 'Address';
-    final subdued = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        );
+    final scheme = Theme.of(context).colorScheme;
 
     Widget content;
     if (_loading) {
@@ -939,7 +1174,8 @@ class _AddressRowState extends State<_AddressRow> {
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: 8),
-          Text('Looking up address...', style: subdued),
+          Text('Looking up...',
+              style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant)),
         ],
       );
     } else if (_failed || _address == null) {
@@ -953,24 +1189,69 @@ class _AddressRowState extends State<_AddressRow> {
         },
         child: Row(
           children: [
-            Icon(Icons.refresh,
-                size: 14,
-                color: Theme.of(context).colorScheme.onSurfaceVariant),
+            Icon(Icons.refresh, size: 14, color: scheme.onSurfaceVariant),
             const SizedBox(width: 6),
-            Text('Address unavailable · tap to retry', style: subdued),
+            Text('Unavailable · tap retry',
+                style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant)),
           ],
         ),
       );
     } else {
-      content = _CopyableAddressContent(text: _address!);
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    _address!,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    maxLines: _expanded ? 3 : 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: _address!));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)),
+                    );
+                  },
+                  child: Icon(Icons.copy_outlined, size: 14, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          if (_expanded && _address!.length > 60)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _address!,
+                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+              ),
+            ),
+        ],
+      );
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 110, child: Text(label, style: subdued)),
+          Icon(Icons.home_outlined, size: 18, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 88,
+            child: Text(
+              'Address',
+              style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
+            ),
+          ),
           Expanded(child: content),
         ],
       ),
@@ -978,94 +1259,3 @@ class _AddressRowState extends State<_AddressRow> {
   }
 }
 
-class _CopyableAddressContent extends StatelessWidget {
-  final String text;
-  const _CopyableAddressContent({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () async {
-        await Clipboard.setData(ClipboardData(text: text));
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Copied'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      },
-      borderRadius: BorderRadius.circular(4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(child: Text(text)),
-            const SizedBox(width: 6),
-            Icon(
-              Icons.copy_outlined,
-              size: 14,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ActionChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-  final Color? color;
-
-  const _ActionChip({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final fg = color ?? scheme.onSurface;
-    final disabled = onTap == null;
-
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Opacity(
-          opacity: disabled ? 0.4 : 1.0,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: (color ?? scheme.primary).withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(icon, color: fg, size: 24),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

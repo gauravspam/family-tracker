@@ -21,6 +21,7 @@ class GeocodeService {
 
   final _cache = <String, String>{};
   DateTime _lastRequest = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<void>? _pendingThrottle;
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -70,12 +71,24 @@ class GeocodeService {
   }
 
   Future<void> _throttle() async {
-    final now = DateTime.now();
-    final elapsed = now.difference(_lastRequest);
-    if (elapsed < const Duration(milliseconds: 1100)) {
-      await Future.delayed(const Duration(milliseconds: 1100) - elapsed);
+    // Serialize concurrent callers so only one passes through at a time,
+    // preventing bursts that violate the Nominatim 1-req/sec policy.
+    while (_pendingThrottle != null) {
+      await _pendingThrottle;
     }
-    _lastRequest = DateTime.now();
+    final completer = Completer<void>();
+    _pendingThrottle = completer.future;
+    try {
+      final now = DateTime.now();
+      final elapsed = now.difference(_lastRequest);
+      if (elapsed < const Duration(milliseconds: 1100)) {
+        await Future.delayed(const Duration(milliseconds: 1100) - elapsed);
+      }
+      _lastRequest = DateTime.now();
+    } finally {
+      _pendingThrottle = null;
+      completer.complete();
+    }
   }
 
   String _keyFor(double lat, double lon) =>

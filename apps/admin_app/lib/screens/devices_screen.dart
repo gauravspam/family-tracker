@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../appearance/avatar_widget.dart';
-import '../appearance/colors.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
+import '../state/hidden_devices_controller.dart';
 import '../ws/traccar_socket.dart';
 import 'device_detail_sheet.dart';
 
@@ -24,6 +23,12 @@ class DevicesScreen extends StatelessWidget {
     }
   }
 
+  List<DeviceView> _visible(List<DeviceView> devices, BuildContext context) {
+    final hidden = context.read<HiddenDevicesController>();
+    if (hidden.isShowingHidden) return devices;
+    return devices.where((d) => !hidden.isHidden(d.device.id)).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<DevicesController>(
@@ -31,6 +36,7 @@ class DevicesScreen extends StatelessWidget {
         return Column(
           children: [
             const _ConnectionBanner(),
+            _BatteryWarningBanner(devices: controller.devices),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: () => _refresh(context),
@@ -44,13 +50,14 @@ class DevicesScreen extends StatelessWidget {
   }
 
   Widget _buildBody(BuildContext context, DevicesController controller) {
+    final visible = _visible(controller.devices, context);
     switch (controller.phase) {
       case DevicesPhase.initial:
       case DevicesPhase.loading:
         if (controller.devices.isEmpty) {
           return const Center(child: CircularProgressIndicator());
         }
-        return _buildList(controller.devices);
+        return _buildList(visible);
 
       case DevicesPhase.error:
         return _ErrorView(
@@ -59,17 +66,19 @@ class DevicesScreen extends StatelessWidget {
         );
 
       case DevicesPhase.ready:
-        if (controller.devices.isEmpty) {
-          return const _EmptyView();
+        if (visible.isEmpty) {
+          final hasHidden = controller.devices
+              .any((d) => context.read<HiddenDevicesController>().isHidden(d.device.id));
+          return _EmptyView(hasHidden: hasHidden);
         }
-        return _buildList(controller.devices);
+        return _buildList(visible);
     }
   }
 
   Widget _buildList(List<DeviceView> devices) {
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(top: 90, bottom: 100),
+      padding: const EdgeInsets.only(top: 110, bottom: 100),
       itemCount: devices.length,
       itemBuilder: (context, index) => _DeviceTile(view: devices[index]),
     );
@@ -127,7 +136,14 @@ class _DeviceTile extends StatelessWidget {
         ? '${p.latitude.toStringAsFixed(5)}, ${p.longitude.toStringAsFixed(5)}'
         : '';
 
-    return Card(
+    final card = Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: view.isLive
+            ? BorderSide(color: Colors.green.shade400.withValues(alpha: 0.6), width: 1.5)
+            : BorderSide.none,
+      ),
       child: InkWell(
         onTap: () => showDeviceDetailSheet(context, view),
         borderRadius: BorderRadius.circular(14),
@@ -135,11 +151,10 @@ class _DeviceTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           child: Row(
             children: [
-              // Avatar with optional live glow
+              // Avatar with online dot
               _AvatarWithGlow(
                 avatarId: view.device.avatarId,
                 colorHex: view.device.colorHex,
-                isLive: view.isLive,
                 isOnline: view.isOnline,
               ),
               const SizedBox(width: 14),
@@ -221,6 +236,10 @@ class _DeviceTile extends StatelessWidget {
         ),
       ),
     );
+    if (view.isLive) {
+      return _PulsingCard(child: card);
+    }
+    return card;
   }
 
   String _relative(DateTime t) {
@@ -235,38 +254,19 @@ class _DeviceTile extends StatelessWidget {
 class _AvatarWithGlow extends StatelessWidget {
   final String? avatarId;
   final String? colorHex;
-  final bool isLive;
   final bool isOnline;
 
   const _AvatarWithGlow({
     required this.avatarId,
     required this.colorHex,
-    required this.isLive,
     required this.isOnline,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = DeviceColorPalette.parse(colorHex);
-
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        if (isLive)
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.5),
-                    blurRadius: 16,
-                    spreadRadius: 4,
-                  ),
-                ],
-              ),
-            ),
-          ),
         DeviceAvatar(
           avatarId: avatarId,
           colorHex: colorHex,
@@ -294,7 +294,8 @@ class _AvatarWithGlow extends StatelessWidget {
 }
 
 class _EmptyView extends StatelessWidget {
-  const _EmptyView();
+  final bool hasHidden;
+  const _EmptyView({this.hasHidden = false});
 
   @override
   Widget build(BuildContext context) {
@@ -303,16 +304,22 @@ class _EmptyView extends StatelessWidget {
       children: [
         SizedBox(
           height: MediaQuery.of(context).size.height * 0.6,
-          child: const Center(
+          child: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.devices_other, size: 72, color: Colors.grey),
-                SizedBox(height: 16),
-                Text('No devices yet'),
-                SizedBox(height: 8),
+                Icon(
+                  hasHidden ? Icons.visibility_off : Icons.devices_other,
+                  size: 72,
+                  color: Colors.grey,
+                ),
+                const SizedBox(height: 16),
+                Text(hasHidden ? 'All devices hidden' : 'No devices yet'),
+                const SizedBox(height: 8),
                 Text(
-                  'Family members can install the Reporter app\nto request access.',
+                  hasHidden
+                      ? 'Use "Show Hidden" in the menu\nto reveal them.'
+                      : 'Family members can install the Reporter app\nto request access.',
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -437,6 +444,89 @@ class _OrphanChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _BatteryWarningBanner extends StatelessWidget {
+  final List<DeviceView> devices;
+  const _BatteryWarningBanner({required this.devices});
+
+  @override
+  Widget build(BuildContext context) {
+    final lowBatt = devices.where((d) {
+      final p = d.position;
+      return p != null && p.isLowBattery;
+    }).toList();
+    if (lowBatt.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      color: Colors.orange.withValues(alpha: 0.15),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          const Icon(Icons.battery_alert, size: 16, color: Colors.orange),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Low battery: ${lowBatt.map((d) => d.displayName).join(", ")}',
+              style: const TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PulsingCard extends StatefulWidget {
+  final Widget child;
+  const _PulsingCard({required this.child});
+
+  @override
+  State<_PulsingCard> createState() => _PulsingCardState();
+}
+
+class _PulsingCardState extends State<_PulsingCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) {
+        final t = _c.value;
+        final opacity = 0.3 + (0.4 * (1 - t));
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.green.withValues(alpha: opacity),
+                blurRadius: 3 + (2 * t),
+                spreadRadius: 0,
+              ),
+            ],
+          ),
+          child: widget.child,
+        );
+      },
     );
   }
 }

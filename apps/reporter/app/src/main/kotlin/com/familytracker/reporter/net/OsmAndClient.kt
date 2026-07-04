@@ -59,4 +59,16 @@ class OsmAndClient {
             Log.i(tag, "Posted lat=$latitude lon=$longitude acc=$accuracyMeters batt=$batteryPercent")
         }
     }
+
+    /** Post a pre-built OsmAnd URL. Used for both live posts and queue flush. */
+    fun postUrl(url: String) {
+        val req = Request.Builder().url(url).get().build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                Log.w(tag, "OsmAnd post failed: HTTP ${resp.code}")
+                throw RuntimeException("OsmAnd HTTP ${resp.code}")
+            }
+        }
+    }
+
 }
