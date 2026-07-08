@@ -9,12 +9,14 @@ import '../api/relay_api.dart';
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../state/devices_controller.dart';
+import '../state/geofences_controller.dart';
 import '../state/hidden_devices_controller.dart';
 import '../state/pending_controller.dart';
 import '../state/theme_controller.dart';
-import '../ws/traccar_socket.dart';
 import 'about_screen.dart';
 import 'devices_screen.dart';
+import 'event_log_screen.dart';
+import 'geofence_sheet.dart';
 import 'map_screen.dart';
 import 'pending_screen.dart';
 
@@ -29,7 +31,9 @@ class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   int _currentTab = 1;
   int _mapRemountSignal = 0;
+  ({String name, double radius})? _pendingGeofence;
   Timer? _pendingTimer;
+  bool _mapOverlayVisible = false;
 
   static const _tabs = [
     _TabMeta(icon: Icons.list_alt_rounded, label: 'Devices'),
@@ -42,14 +46,17 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _pageController = PageController(initialPage: 1);
     _startPendingTimer();
+    _startGeofencePollTimer();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _listenToHiddenChanges();
+      _loadGeofences();
     });
   }
 
   @override
   void dispose() {
     _pendingTimer?.cancel();
+    _geofencePollTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -72,6 +79,22 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_currentTab == 2) {
         context.read<PendingController>().refresh();
       }
+    });
+  }
+
+  void _loadGeofences() {
+    try {
+      context.read<GeofencesController>().refresh();
+    } catch (_) {}
+  }
+
+  Timer? _geofencePollTimer;
+
+  void _startGeofencePollTimer() {
+    _geofencePollTimer?.cancel();
+    _geofencePollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      _loadGeofences();
     });
   }
 
@@ -101,6 +124,8 @@ class _HomeScreenState extends State<HomeScreen> {
       switch (index) {
         case 0:
           context.read<DevicesController>().refresh();
+        case 1:
+          _loadGeofences();
         case 2:
           context.read<PendingController>().refresh();
       }
@@ -411,7 +436,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 : const BouncingScrollPhysics(),
             children: [
               DevicesScreen(),
-              MapScreen(remountSignal: _mapRemountSignal),
+              MapScreen(
+                remountSignal: _mapRemountSignal,
+                pendingGeofence: _pendingGeofence,
+                onPlacementStarted: () {
+                  if (mounted) setState(() => _pendingGeofence = null);
+                },
+                onOverlayVisibilityChanged: (v) {
+                  if (mounted && _mapOverlayVisible != v) {
+                    setState(() => _mapOverlayVisible = v);
+                  }
+                },
+              ),
               PendingScreen(),
             ],
           ),
@@ -425,6 +461,21 @@ class _HomeScreenState extends State<HomeScreen> {
               title: _tabs[_currentTab].label,
               onRefresh: _refresh,
               onTheme: () => _showThemeDialog(context),
+              onGeofences: () async {
+                final result = await showGeofenceSheet(context);
+                if (result != null && mounted) {
+                  setState(() {
+                    _pendingGeofence = result;
+                    _mapRemountSignal++;
+                  });
+                  _onTabTapped(1);
+                }
+              },
+              onEventLog: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const EventLogScreen()),
+                );
+              },
               onManageHidden: () => _showManageHidden(context),
               onShowHidden: () => _showShowHiddenDialog(context),
               onAbout: () {
@@ -460,11 +511,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // ── Geofence alerts ──────────────────────────────────────
-          const _GeofenceAlertLayer(),
-
           // ── Nav pill ──────────────────────────────────────────────
-          Positioned(
+          if (!_mapOverlayVisible)
+            Positioned(
             bottom: bottomPadding + 16,
             left: 0,
             right: 0,
@@ -497,6 +546,8 @@ class _FloatingHeader extends StatelessWidget {
   final String title;
   final VoidCallback onRefresh;
   final VoidCallback onTheme;
+  final VoidCallback onGeofences;
+  final VoidCallback onEventLog;
   final VoidCallback onManageHidden;
   final VoidCallback onShowHidden;
   final VoidCallback onAbout;
@@ -506,6 +557,8 @@ class _FloatingHeader extends StatelessWidget {
     required this.title,
     required this.onRefresh,
     required this.onTheme,
+    required this.onGeofences,
+    required this.onEventLog,
     required this.onManageHidden,
     required this.onShowHidden,
     required this.onAbout,
@@ -555,6 +608,8 @@ class _FloatingHeader extends StatelessWidget {
                 color: scheme.surface,
                 onSelected: (choice) {
                   if (choice == 'theme') onTheme();
+                  if (choice == 'geofences') onGeofences();
+                  if (choice == 'event_log') onEventLog();
                   if (choice == 'manage_hidden') onManageHidden();
                   if (choice == 'show_hidden') onShowHidden();
                   if (choice == 'about') onAbout();
@@ -566,6 +621,14 @@ class _FloatingHeader extends StatelessWidget {
                     const PopupMenuItem(
                       value: 'theme',
                       child: Text('Theme'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'geofences',
+                      child: Text('Geofences'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'event_log',
+                      child: Text('Event Log'),
                     ),
                     const PopupMenuItem(
                       value: 'manage_hidden',
@@ -727,59 +790,4 @@ class _PillNavItem extends StatelessWidget {
       ),
     );
   }
-}
-
-// ── Geofence alert layer ────────────────────────────────────────────
-
-class _GeofenceAlertLayer extends StatefulWidget {
-  const _GeofenceAlertLayer();
-
-  @override
-  State<_GeofenceAlertLayer> createState() => _GeofenceAlertLayerState();
-}
-
-class _GeofenceAlertLayerState extends State<_GeofenceAlertLayer> {
-  StreamSubscription<List<Map<String, dynamic>>>? _sub;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _listen());
-  }
-
-  void _listen() {
-    final socket = context.read<TraccarSocket>();
-    _sub = socket.events.listen(_onEvent);
-  }
-
-  void _onEvent(List<Map<String, dynamic>> events) {
-    for (final e in events) {
-      final type = e['type'] as String?;
-      final geofenceId = e['geofenceId'];
-      if (type == null || geofenceId == null) continue;
-      if (type.startsWith('geofence')) {
-        HapticFeedback.heavyImpact();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${type == "geofenceEnter" ? "Entered" : "Exited"} geofence #$geofenceId',
-              ),
-              duration: const Duration(seconds: 4),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
 }

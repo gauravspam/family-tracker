@@ -39,15 +39,14 @@ func (c *Client) SendData(ctx context.Context, token string, data map[string]str
 	return err
 }
 
-func (c *Client) SendToMany(ctx context.Context, tokens []string, title, body string, data map[string]string) error {
+func (c *Client) SendToMany(ctx context.Context, tokens []string, data map[string]string) error {
 	if c == nil || c.mc == nil || len(tokens) == 0 {
 		return nil
 	}
 	br, err := c.mc.SendEachForMulticast(ctx, &messaging.MulticastMessage{
-		Tokens:       tokens,
-		Notification: &messaging.Notification{Title: title, Body: body},
-		Data:         data,
-		Android:      &messaging.AndroidConfig{Priority: "high"},
+		Tokens:  tokens,
+		Data:    data,
+		Android: &messaging.AndroidConfig{Priority: "high"},
 	})
 	if err != nil {
 		return err

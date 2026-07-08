@@ -49,7 +49,7 @@ class LocationForegroundService : Service() {
     private lateinit var positionQueue: PositionQueue
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var currentInterval: Long = IDLE_INTERVAL_MS
+    private var currentInterval: Long = LIVE_INTERVAL_MS
     private var firstStart = true
     private var pollJob: Job? = null
 
@@ -78,7 +78,22 @@ class LocationForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(tag, "Service started")
+        if (intent?.getBooleanExtra(EXTRA_LOCATE, false) == true) {
+            Log.i(tag, "Locate-once mode")
+            startForegroundWithNotification()
+            requestSingleLocation()
+            return START_NOT_STICKY
+        }
+
+        // Safety: if service was somehow started but mode is IDLE, stop immediately
+        if (storage.mode != TrackingMode.LIVE) {
+            Log.i(tag, "Service started but mode is IDLE; stopping")
+            startForegroundWithNotification()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        Log.i(tag, "Service started (LIVE mode)")
         startForegroundWithNotification()
         applyInterval()
         startPollLoop()
@@ -98,15 +113,10 @@ class LocationForegroundService : Service() {
     // ── Location handling ─────────────────────────────────────────────
 
     private fun applyInterval() {
-        val desiredInterval = when (storage.mode) {
-            TrackingMode.LIVE -> LIVE_INTERVAL_MS
-            TrackingMode.IDLE -> IDLE_INTERVAL_MS
-        }
-        if (currentInterval == desiredInterval && !firstStart) return
-
+        if (!firstStart && currentInterval == LIVE_INTERVAL_MS) return
         firstStart = false
-        currentInterval = desiredInterval
-        startLocationUpdates(desiredInterval)
+        currentInterval = LIVE_INTERVAL_MS
+        startLocationUpdates(LIVE_INTERVAL_MS)
     }
 
     private fun startLocationUpdates(intervalMs: Long) {
@@ -135,6 +145,61 @@ class LocationForegroundService : Service() {
         }
     }
 
+    private fun requestSingleLocation() {
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(tag, "Location permission missing; stopping locate")
+            stopSelf()
+            return
+        }
+
+        fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { loc ->
+                if (loc != null) {
+                    Log.i(tag, "Single location obtained: ${loc.latitude},${loc.longitude}")
+                    postLocation(loc)
+                }
+                stopSelf()
+            }
+            .addOnFailureListener { e ->
+                Log.w(tag, "Single location failed", e)
+                stopSelf()
+            }
+    }
+
+    private fun postLocation(loc: Location) {
+        val token = storage.ingestToken
+        val url = storage.ingestUrl
+        if (token.isNullOrEmpty() || url.isNullOrEmpty()) {
+            Log.w(tag, "Missing ingestToken/ingestUrl; skipping post")
+            return
+        }
+        val batt = readBatteryLevel()
+        val course = if (loc.hasBearing()) loc.bearing else 0f
+
+        val posUrl = buildString {
+            append(url.trimEnd('/'))
+            append("/?id=").append(token)
+            append("&lat=").append(loc.latitude)
+            append("&lon=").append(loc.longitude)
+            append("&timestamp=").append(loc.time / 1000L)
+            append("&hdop=").append(loc.accuracy)
+            append("&altitude=").append(if (loc.hasAltitude()) loc.altitude else 0.0)
+            append("&speed=").append(if (loc.hasSpeed()) loc.speed else 0f)
+            append("&bearing=").append(course)
+            if (batt != null) append("&batt=").append(batt)
+        }
+
+        try {
+            osmand.postUrl(posUrl)
+        } catch (e: Exception) {
+            Log.w(tag, "Single locate post failed; queuing", e)
+            positionQueue.enqueue(posUrl)
+        }
+    }
+
     private fun handleLocation(loc: Location) {
         if (storage.mode == TrackingMode.LIVE && storage.liveExpiresAt > 0 &&
             System.currentTimeMillis() > storage.liveExpiresAt
@@ -146,35 +211,9 @@ class LocationForegroundService : Service() {
             return
         }
 
-        val token = storage.ingestToken
-        val url = storage.ingestUrl
-        if (token.isNullOrEmpty() || url.isNullOrEmpty()) {
-            Log.w(tag, "Missing ingestToken/ingestUrl; skipping post")
-            return
-        }
-
-        val batt = readBatteryLevel()
-        val course = if (loc.hasBearing()) loc.bearing else 0f
-
         scope.launch {
-            // Build the URL for this position (used for both live post and queue)
-            val posUrl = buildString {
-                append(url.trimEnd('/'))
-                append("/?id=").append(token)
-                append("&lat=").append(loc.latitude)
-                append("&lon=").append(loc.longitude)
-                append("&timestamp=").append(loc.time / 1000L)
-                append("&hdop=").append(loc.accuracy)
-                append("&altitude=").append(if (loc.hasAltitude()) loc.altitude else 0.0)
-                append("&speed=").append(if (loc.hasSpeed()) loc.speed else 0f)
-                append("&bearing=").append(course)
-                if (batt != null) append("&batt=").append(batt)
-            }
-
-            try {
-                osmand.postUrl(posUrl)
-
-                // Success — try to flush any queued positions
+            postLocation(loc)
+            if (storage.mode == TrackingMode.LIVE) {
                 val queued = positionQueue.drainAll()
                 if (queued.isNotEmpty()) {
                     Log.i(tag, "Flushing ${queued.size} queued positions")
@@ -182,15 +221,11 @@ class LocationForegroundService : Service() {
                         try {
                             osmand.postUrl(qUrl)
                         } catch (e: Exception) {
-                            // Re-queue failures
                             positionQueue.enqueue(qUrl)
-                            break // Stop flushing on first failure
+                            break
                         }
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(tag, "Post failed; queuing position")
-                positionQueue.enqueue(posUrl)
             }
         }
     }
@@ -321,13 +356,24 @@ class LocationForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "reporter_location"
         private const val NOTIFICATION_ID = 1
+        const val EXTRA_LOCATE = "locate"
 
-        private const val IDLE_INTERVAL_MS = 600_000L  // 10 minutes
         private const val LIVE_INTERVAL_MS = 5_000L
         private const val POLL_INTERVAL_MS = 300_000L  // 5 minutes
 
         fun start(context: Context) {
             val intent = Intent(context, LocationForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun startLocate(context: Context) {
+            val intent = Intent(context, LocationForegroundService::class.java).apply {
+                putExtra(EXTRA_LOCATE, true)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

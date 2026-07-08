@@ -33,6 +33,13 @@ class WatchdogWorker(
             return Result.success()
         }
 
+        // Only restart the service if we're in LIVE mode.
+        // In IDLE mode we don't run the foreground service at all.
+        if (storage.mode != com.familytracker.reporter.TrackingMode.LIVE) {
+            Log.i(TAG, "Mode is IDLE; not restarting service")
+            return Result.success()
+        }
+
         if (isServiceRunning()) {
             Log.i(TAG, "Service is running; nothing to do")
             return Result.success()

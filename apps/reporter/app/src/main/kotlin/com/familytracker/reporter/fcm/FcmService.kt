@@ -51,6 +51,7 @@ class FcmService : FirebaseMessagingService() {
             "approved" -> handleApproved(storage, data)
             "live_mode" -> handleLive(storage, data)
             "idle_mode" -> handleIdle(storage)
+            "locate" -> handleLocate(storage)
             "removed" -> handleRemoved(storage)
             "ring" -> handleRing(data)
             else -> Log.w(tag, "Unknown command $command")
@@ -67,7 +68,16 @@ class FcmService : FirebaseMessagingService() {
         storage.approval = ApprovalStatus.APPROVED
         storage.ingestToken = token
         storage.ingestUrl = url
-        LocationForegroundService.start(applicationContext)
+        // Don't start LocationForegroundService — reporter stays idle until
+        // "live_mode" or "locate" command is received.
+    }
+
+    private fun handleLocate(storage: Storage) {
+        if (storage.approval != ApprovalStatus.APPROVED) {
+            Log.w(tag, "locate: not approved; ignoring")
+            return
+        }
+        LocationForegroundService.startLocate(applicationContext)
     }
 
     private fun handleLive(storage: Storage, data: Map<String, String>) {
@@ -93,7 +103,7 @@ class FcmService : FirebaseMessagingService() {
     private fun handleIdle(storage: Storage) {
         storage.mode = TrackingMode.IDLE
         storage.liveExpiresAt = 0
-        LocationForegroundService.start(applicationContext)
+        LocationForegroundService.stop(applicationContext)
     }
 
     private fun handleRemoved(storage: Storage) {

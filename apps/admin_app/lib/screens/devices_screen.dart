@@ -177,7 +177,7 @@ class _DeviceTile extends StatelessWidget {
                         ),
                         if (view.isLive) ...[
                           const SizedBox(width: 8),
-                          _LiveChip(expiresAt: view.liveExpiresAt),
+                          _LiveChip(),
                         ],
                         if (view.isOrphan) ...[
                           const SizedBox(width: 8),
@@ -370,8 +370,7 @@ class _ErrorView extends StatelessWidget {
 }
 
 class _LiveChip extends StatefulWidget {
-  final DateTime? expiresAt;
-  const _LiveChip({required this.expiresAt});
+  const _LiveChip();
 
   @override
   State<_LiveChip> createState() => _LiveChipState();
@@ -379,39 +378,16 @@ class _LiveChip extends StatefulWidget {
 
 class _LiveChipState extends State<_LiveChip> {
   @override
-  void initState() {
-    super.initState();
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(seconds: 15));
-      if (!mounted) return false;
-      setState(() {});
-      return mounted;
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final exp = widget.expiresAt;
-    String label = 'LIVE';
-    if (exp != null) {
-      final remaining = exp.difference(DateTime.now());
-      if (remaining.isNegative) {
-        label = 'LIVE (ending)';
-      } else if (remaining.inMinutes >= 1) {
-        label = 'LIVE ${remaining.inMinutes}m';
-      } else {
-        label = 'LIVE ${remaining.inSeconds}s';
-      }
-    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: Colors.green.shade600,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
+      child: const Text(
+        'LIVE',
+        style: TextStyle(
           color: Colors.white,
           fontSize: 11,
           fontWeight: FontWeight.w600,
@@ -496,8 +472,8 @@ class _PulsingCardState extends State<_PulsingCard>
     super.initState();
     _c = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat();
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
   }
 
   @override
@@ -512,15 +488,15 @@ class _PulsingCardState extends State<_PulsingCard>
       animation: _c,
       builder: (_, __) {
         final t = _c.value;
-        final opacity = 0.3 + (0.4 * (1 - t));
+        final shadowOpacity = 0.15 + (0.35 * t);
         return Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.green.withValues(alpha: opacity),
-                blurRadius: 3 + (2 * t),
-                spreadRadius: 0,
+                color: Colors.green.withValues(alpha: shadowOpacity),
+                blurRadius: 10 + (4 * t),
+                spreadRadius: -3,
               ),
             ],
           ),

@@ -159,7 +159,41 @@ class DevicesController extends ChangeNotifier {
     }
   }
 
-  /// Removes all stored trail points for the given Traccar device id,
+  /// Fetches historical positions for [traccarDeviceId] from Traccar and
+  /// prepends them to the in-memory trail. Call this when the user starts
+  /// following a device so older trail data is available immediately.
+  Future<void> fetchTrail(int traccarDeviceId, {Duration lookback = const Duration(hours: 2)}) async {
+    final now = DateTime.now();
+    final from = now.subtract(lookback);
+    try {
+      final raw = await _traccar.listDevicePositions(
+        traccarDeviceId,
+        from: from,
+        to: now,
+      );
+      final list = _trails.putIfAbsent(traccarDeviceId, () => []);
+      for (final rp in raw) {
+        final p = TraccarPosition.fromJson(rp);
+        // Skip points already in trail (by id)
+        if (list.any((e) => e.id == p.id)) continue;
+        list.add(p);
+      }
+      list.sort((a, b) => a.fixTime.compareTo(b.fixTime));
+      // Re-apply trim rules
+      final cutoff = DateTime.now().subtract(_trailMaxAge);
+      while (list.isNotEmpty && list.first.fixTime.isBefore(cutoff)) {
+        list.removeAt(0);
+      }
+      while (list.length > _trailMaxLength) {
+        list.removeAt(0);
+      }
+      notifyListeners();
+    } catch (_) {
+      // Silently fail — live trail data will still arrive via WebSocket.
+    }
+  }
+
+
   /// or all devices when [traccarDeviceId] is null.
   void clearTrail([int? traccarDeviceId]) {
     if (traccarDeviceId == null) {

@@ -32,7 +32,14 @@ apps/reporter/local.properties
 
 # ── Go ───────────────────────────────────────────────
 services/notify_relay/server
+services/notify_relay/relay-server
 services/notify_relay/*.exe
+
+# ── APK / Build artifacts ────────────────────────────
+*.apk
+
+# ── Screenshots ──────────────────────────────────────
+Screenshot_*
 
 # ── Misc ─────────────────────────────────────────────
 .docker/

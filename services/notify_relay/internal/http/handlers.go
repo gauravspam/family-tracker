@@ -58,6 +58,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/admin/live/{deviceId}", h.live)
 		r.Post("/admin/idle/{deviceId}", h.idle)
 		r.Post("/admin/ring/{deviceId}", h.ring)
+		r.Post("/admin/locate/{deviceId}", h.locate)
 		r.Post("/admin/fcm-token", h.registerAdminFCM)
 	})
 
@@ -118,6 +119,20 @@ func (h *Handler) join(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "internal error")
 		return
 	}
+
+	// If this androidId already belongs to an approved device, also
+	// update the FCM token in reporter_device_meta so the relay can
+	// still reach it even after a reinstall (which generates a new
+	// FCM token without needing re-approval).
+	ctx := r.Context()
+	if meta, lookupErr := h.st.GetReporterMetaByAndroidID(ctx, req.AndroidID); lookupErr == nil {
+		if updateErr := h.st.UpdateReporterFCMToken(ctx, meta.TraccarDeviceID, req.FCMToken); updateErr != nil {
+			log.Printf("join: update reporter meta FCM: %v (non-fatal)", updateErr)
+		} else {
+			log.Printf("join: refreshed FCM token for approved device %d", meta.TraccarDeviceID)
+		}
+	}
+
 	w.WriteHeader(202)
 	jsonOK(w, map[string]string{"status": "pending"})
 }
@@ -478,6 +493,36 @@ func (h *Handler) live(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// ── POST /admin/locate/{deviceId} ──
+
+func (h *Handler) locate(w http.ResponseWriter, r *http.Request) {
+	tid, err := strconv.ParseInt(chi.URLParam(r, "deviceId"), 10, 64)
+	if err != nil {
+		jsonErr(w, 400, "invalid deviceId")
+		return
+	}
+	ctx := r.Context()
+
+	meta, err := h.st.GetReporterMetaByTraccarID(ctx, tid)
+	if err != nil {
+		if errors.Is(err, store.ErrNoRows) {
+			jsonErr(w, 404, "device not found")
+			return
+		}
+		jsonErr(w, 500, "internal error")
+		return
+	}
+
+	if err := h.fc.SendData(ctx, meta.FCMToken, map[string]string{
+		"command": "locate",
+	}); err != nil {
+		log.Printf("FCM locate: %v", err)
+		jsonErr(w, 500, "fcm send failed")
+		return
+	}
+	w.WriteHeader(204)
+}
+
 // ── POST /admin/fcm-token ──
 
 func (h *Handler) registerAdminFCM(w http.ResponseWriter, r *http.Request) {
@@ -508,9 +553,10 @@ func (h *Handler) traccarWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ev struct {
-		DeviceID   int64  `json:"deviceId"`
-		Type       string `json:"type"`
-		GeofenceID *int64 `json:"geofenceId"`
+		DeviceID   int64                  `json:"deviceId"`
+		Type       string                 `json:"type"`
+		GeofenceID *int64                 `json:"geofenceId"`
+		Attributes map[string]interface{} `json:"attributes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 		jsonErr(w, 400, "invalid json")
@@ -533,9 +579,37 @@ func (h *Handler) traccarWebhook(w http.ResponseWriter, r *http.Request) {
 		data["geofenceId"] = strconv.FormatInt(*ev.GeofenceID, 10)
 	}
 
-	title := "Geofence Alert"
-	body := fmt.Sprintf("Device %d: %s", ev.DeviceID, ev.Type)
-	if err := h.fc.SendToMany(ctx, tokens, title, body, data); err != nil {
+	// Resolve device name
+	deviceName := fmt.Sprintf("Device %d", ev.DeviceID)
+	if dev, err := h.tc.GetDevice(ctx, ev.DeviceID); err == nil {
+		deviceName = dev.Name
+	}
+	data["deviceName"] = deviceName
+
+	// Resolve geofence name
+	geoName := ""
+	if ev.Attributes != nil {
+		if n, ok := ev.Attributes["geofenceName"].(string); ok {
+			geoName = n
+		}
+	}
+	if geoName == "" && ev.GeofenceID != nil {
+		geoName = fmt.Sprintf("Geofence %d", *ev.GeofenceID)
+	}
+	if geoName != "" {
+		data["geofenceName"] = geoName
+	}
+
+	// Deterministic title for notification
+	isEnter := ev.Type == "geofenceEnter"
+	if isEnter {
+		data["title"] = "Entered " + geoName
+	} else {
+		data["title"] = "Exited " + geoName
+	}
+	data["body"] = deviceName
+
+	if err := h.fc.SendToMany(ctx, tokens, data); err != nil {
 		log.Printf("SendToMany: %v", err)
 	}
 	w.WriteHeader(200)

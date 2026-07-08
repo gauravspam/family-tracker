@@ -32,22 +32,76 @@ class TraccarApi {
     return _parseList(r);
   }
 
-  List<Map<String, dynamic>> _parseList(Response r) {
-    if (r.statusCode == 401 || r.statusCode == 403) {
-      throw TraccarUnauthorized();
-    }
+  // ── Geofences ──────────────────────────────────────────────────────
 
+  Future<List<Map<String, dynamic>>> listGeofences() async {
+    final r = await _dio.get('/api/geofences');
+    return _parseList(r);
+  }
+
+  Future<Map<String, dynamic>> createGeofence(Map<String, dynamic> body) async {
+    final r = await _dio.post('/api/geofences',
+        data: jsonEncode(body),
+        options: Options(contentType: Headers.jsonContentType));
+    return _parseObject(r);
+  }
+
+  Future<Map<String, dynamic>> updateGeofence(int id, Map<String, dynamic> body) async {
+    final r = await _dio.put('/api/geofences/$id',
+        data: jsonEncode(body),
+        options: Options(contentType: Headers.jsonContentType));
+    return _parseObject(r);
+  }
+
+  Future<void> deleteGeofence(int id) async {
+    final r = await _dio.delete('/api/geofences/$id');
+    _checkStatus(r);
+  }
+
+  // ── Positions history ─────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> listDevicePositions(
+    int deviceId, {
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final params = <String, dynamic>{'deviceId': deviceId};
+    if (from != null) params['from'] = from.toUtc().toIso8601String();
+    if (to != null) params['to'] = to.toUtc().toIso8601String();
+    final r = await _dio.get('/api/positions', queryParameters: params);
+    return _parseList(r);
+  }
+
+  // ── Events ────────────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> listEvents({
+    List<int>? deviceId,
+    int? geofenceId,
+    List<String>? type,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final params = <String, dynamic>{};
+    if (deviceId != null && deviceId.isNotEmpty) params['deviceId'] = deviceId;
+    if (geofenceId != null) params['geofenceId'] = geofenceId;
+    if (type != null && type.isNotEmpty) params['type'] = type;
+    if (from != null) params['from'] = from.toUtc().toIso8601String();
+    if (to != null) params['to'] = to.toUtc().toIso8601String();
+    final r = await _dio.get(
+      '/api/reports/events',
+      queryParameters: params,
+      options: Options(headers: {'Accept': 'application/json'}),
+    );
+    return _parseList(r);
+  }
+
+  List<Map<String, dynamic>> _parseList(Response r) {
+    _checkStatus(r);
     final raw = r.data;
     final text = raw is String ? raw.trim() : '';
-
-    if (r.statusCode! >= 500 || text.isEmpty || !text.startsWith('[')) {
-      throw Exception('Server returned unexpected response (Traccar may be restarting)');
+    if (text.isEmpty || !text.startsWith('[')) {
+      throw Exception('Traccar list response unexpected: $text');
     }
-
-    if (r.statusCode! >= 400) {
-      throw Exception('Traccar HTTP ${r.statusCode}');
-    }
-
     final decoded = jsonDecode(text);
     if (decoded is! List) {
       throw Exception('Expected JSON array from Traccar');
@@ -55,6 +109,28 @@ class TraccarApi {
     return decoded
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
+  }
+
+  Map<String, dynamic> _parseObject(Response r) {
+    _checkStatus(r);
+    final raw = r.data;
+    final text = raw is String ? raw.trim() : '';
+    if (text.isEmpty) throw Exception('Traccar returned empty response');
+    final decoded = jsonDecode(text);
+    if (decoded is! Map) {
+      throw Exception('Expected JSON object from Traccar');
+    }
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  void _checkStatus(Response r) {
+    if (r.statusCode == 401 || r.statusCode == 403) {
+      throw TraccarUnauthorized();
+    }
+    if (r.statusCode! >= 400) {
+      final body = r.data is String ? r.data : '';
+      throw Exception('Traccar HTTP ${r.statusCode}: $body');
+    }
   }
 }
 

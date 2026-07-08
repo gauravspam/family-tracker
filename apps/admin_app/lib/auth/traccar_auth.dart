@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 
 class TraccarAuthResult {
@@ -22,6 +24,7 @@ class TraccarAuth {
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 10),
+          responseType: ResponseType.plain,
         ));
 
   Future<TraccarAuthResult> login(String email, String password) async {
@@ -32,6 +35,7 @@ class TraccarAuth {
         contentType: Headers.formUrlEncodedContentType,
         followRedirects: false,
         validateStatus: (s) => s != null && s < 500,
+        headers: {'Accept': 'application/json'},
       ),
     );
 
@@ -40,7 +44,7 @@ class TraccarAuth {
       throw Exception(_friendlyAuthError(response.statusCode, message));
     }
 
-    final data = response.data as Map<String, dynamic>;
+    final data = jsonDecode(response.data as String) as Map<String, dynamic>;
 
     final setCookieHeaders = response.headers.map['set-cookie'] ?? [];
     final jSessionId = _extractJSessionId(setCookieHeaders);

@@ -111,6 +111,26 @@ func (c *Client) CreateDevice(ctx context.Context, name, uniqueID string) (Devic
 	return d, json.NewDecoder(resp.Body).Decode(&d)
 }
 
+func (c *Client) GetDevice(ctx context.Context, id int64) (*Device, error) {
+	resp, err := c.do(ctx, "GET", fmt.Sprintf("/api/devices?id=%d", id), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetch device %d: %s", resp.StatusCode, b)
+	}
+	var list []Device
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, fmt.Errorf("decode device list: %w", err)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("device %d not found", id)
+	}
+	return &list[0], nil
+}
+
 func (c *Client) DeleteDevice(ctx context.Context, id int64) error {
 	resp, err := c.do(ctx, "DELETE", fmt.Sprintf("/api/devices/%d", id), nil)
 	if err != nil {

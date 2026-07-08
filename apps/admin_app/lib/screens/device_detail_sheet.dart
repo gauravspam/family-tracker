@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -20,6 +22,7 @@ Future<void> showDeviceDetailSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
+    backgroundColor: Colors.transparent,
     builder: (context) => _DeviceDetailSheet(view: view, onFollow: onFollow),
   );
 }
@@ -165,13 +168,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   }
 
   Future<void> _triggerLive() async {
-    final minutes = await showDialog<int>(
-      context: context,
-      builder: (ctx) => const _LiveDurationDialog(),
-    );
-    if (minutes == null) return;
     if (!mounted) return;
-
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
@@ -179,7 +176,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final devices = context.read<DevicesController>();
 
     try {
-      final expiresAt = DateTime.now().toUtc().add(Duration(minutes: minutes));
+      final expiresAt = DateTime.now().toUtc().add(const Duration(minutes: 30));
       await relay.triggerLive(
         traccarDeviceId: view.device.id,
         expiresAtUtc: expiresAt,
@@ -188,7 +185,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(
-        SnackBar(content: Text('Live mode ON for $minutes min')),
+        const SnackBar(content: Text('Live mode ON')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -196,6 +193,30 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
       messenger.showSnackBar(
         SnackBar(
           content: Text('Live trigger failed: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _locateDevice() async {
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final relay = context.read<RelayApi>();
+
+    try {
+      await relay.locateDevice(view.device.id);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Location refresh sent')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Refresh failed: $e'),
           backgroundColor: Colors.red.shade700,
         ),
       );
@@ -337,14 +358,20 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   Widget build(BuildContext context) {
     final p = view.position;
     final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 4,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-      ),
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark
+                ? const Color(0xFF1C1C1E).withValues(alpha: 0.75)
+                : Colors.white.withValues(alpha: 0.75),
+          ),
+          child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -407,6 +434,12 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    _IconButton(
+                      icon: Icons.refresh,
+                      tooltip: 'Refresh location',
+                      onPressed: _busy ? null : _locateDevice,
+                    ),
+                    const SizedBox(width: 4),
                     _IconButton(
                       icon: Icons.palette_outlined,
                       tooltip: 'Appearance',
@@ -557,7 +590,10 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+),
+);
   }
 }
 
@@ -570,16 +606,30 @@ class _Card extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: children,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: isDark
+                ? const Color(0xFF1C1C1E).withValues(alpha: 0.25)
+                : Colors.white.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.04),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: children,
+          ),
+        ),
       ),
     );
   }
@@ -845,104 +895,32 @@ class _TertiaryButton extends StatelessWidget {
   }
 }
 
-class _LiveDurationDialog extends StatefulWidget {
-  const _LiveDurationDialog();
 
-  @override
-  State<_LiveDurationDialog> createState() => _LiveDurationDialogState();
-}
 
-class _LiveDurationDialogState extends State<_LiveDurationDialog> {
-  int _minutes = 30;
-  static const _options = [5, 15, 30, 60, 120];
 
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Track Live'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('For how long?'),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final m in _options)
-                ChoiceChip(
-                  label: Text(m >= 60 ? '${m ~/ 60}h' : '${m}m'),
-                  selected: _minutes == m,
-                  onSelected: (v) {
-                    if (v) setState(() => _minutes = m);
-                  },
-                ),
-            ],
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, _minutes),
-          child: const Text('Start'),
-        ),
-      ],
-    );
-  }
-}
-
-class _LiveBanner extends StatefulWidget {
+class _LiveBanner extends StatelessWidget {
   final DateTime? expiresAt;
   const _LiveBanner({required this.expiresAt});
 
   @override
-  State<_LiveBanner> createState() => _LiveBannerState();
-}
-
-class _LiveBannerState extends State<_LiveBanner> {
-  @override
-  void initState() {
-    super.initState();
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(seconds: 15));
-      if (!mounted) return false;
-      setState(() {});
-      return mounted;
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final exp = widget.expiresAt;
-    String detail = 'Reporter is posting at high frequency.';
-    if (exp != null) {
-      final remaining = exp.difference(DateTime.now());
-      if (remaining.isNegative) {
-        detail = 'Ending shortly...';
-      } else if (remaining.inMinutes >= 1) {
-        detail = 'Ends in ${remaining.inMinutes} min';
-      } else {
-        detail = 'Ends in ${remaining.inSeconds} s';
-      }
-    }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.green.shade600.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.gps_fixed, color: Colors.green.shade700, size: 18),
           const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'LIVE mode active · $detail',
-              style: TextStyle(color: Colors.green.shade800, fontSize: 13),
+          Text(
+            'LIVE mode active.',
+            style: TextStyle(
+              color: Colors.green.shade800,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],

@@ -18,7 +18,7 @@
 
   <!-- Geofence event forwarding to relay -->
   <entry key='event.forward.type'>json</entry>
-  <entry key='event.forward.url'>http://ft_relay:8080/webhook/traccar/event</entry>
+  <entry key='event.forward.url'>http://172.18.0.1:8080/webhook/traccar/event</entry>
   <entry key='event.forward.header'>X-Relay-Secret: hm8AnrC/GHdS/nu8dqkqJvOspABxOn4H6qRy5nTC2PY=</entry>
 
   <!-- Registration closed: admin account already created -->

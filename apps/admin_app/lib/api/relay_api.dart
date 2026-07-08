@@ -86,7 +86,16 @@ class RelayApi {
     _checkStatus(r);
   }
 
-    Future<void> setAppearance({
+  Future<void> registerFcmToken(String token) async {
+    final r = await _dio.post(
+      '/admin/fcm-token',
+      data: jsonEncode({'fcmToken': token, 'userId': 1}),
+      options: Options(contentType: Headers.jsonContentType),
+    );
+    _checkStatus(r);
+  }
+
+  Future<void> setAppearance({
     required int traccarDeviceId,
     String? colorHex,
     String? avatarId,
@@ -100,6 +109,11 @@ class RelayApi {
       data: jsonEncode(body),
       options: Options(contentType: Headers.jsonContentType),
     );
+    _checkStatus(r);
+  }
+
+  Future<void> locateDevice(int traccarDeviceId) async {
+    final r = await _dio.post('/admin/locate/$traccarDeviceId');
     _checkStatus(r);
   }
 

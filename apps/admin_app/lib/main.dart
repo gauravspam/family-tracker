@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:provider/provider.dart';
 
 import 'api/relay_api.dart';
@@ -12,14 +14,55 @@ import 'config/server_config.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/server_setup_screen.dart';
+import 'services/fcm_service.dart';
 import 'state/devices_controller.dart';
+import 'state/geofences_controller.dart';
 import 'state/hidden_devices_controller.dart';
 import 'state/pending_controller.dart';
 import 'state/theme_controller.dart';
 import 'ws/traccar_socket.dart';
 
-void main() {
+/// Top-level background message handler (must not be a class method).
+@pragma('vm:entry-point')
+Future<void> _firebaseBgHandler(RemoteMessage message) async {
+  final data = message.data;
+  final title = data['title'] ?? 'Geofence Alert';
+  final body = data['body'] ?? '';
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+  await plugin.initialize(const InitializationSettings(android: androidSettings));
+
+  await plugin.show(
+    DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    title,
+    body,
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'geofence_alerts',
+        'Geofence Alerts',
+        channelDescription: 'When a family member enters or exits a geofence',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        icon: '@mipmap/ic_launcher',
+      ),
+    ),
+  );
+}
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Register background handler before Firebase init
+  FirebaseMessaging.onBackgroundMessage(_firebaseBgHandler);
+
+  try {
+    await FcmService.init();
+  } catch (_) {
+    // Firebase unavailable — FCM alerts won't work, app continues normally.
+  }
   runApp(const AdminApp());
 }
 
@@ -196,6 +239,7 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
         ChangeNotifierProvider(create: (_) => PendingController(_relayApi)),
         ChangeNotifierProvider<TraccarSocket>.value(value: _socket),
         ChangeNotifierProvider<ThemeController>.value(value: widget.themeController),
+        ChangeNotifierProvider(create: (_) => GeofencesController(_traccarApi)),
         ChangeNotifierProvider(create: (_) => HiddenDevicesController()),
       ],
       child: MaterialApp(
@@ -203,6 +247,7 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
         theme: widget.theme,
         darkTheme: widget.darkTheme,
         themeMode: widget.themeController.mode,
+        navigatorKey: FcmService.navigatorKey,
         home: const _RootRouter(),
       ),
     );
@@ -252,6 +297,8 @@ class _RootRouterState extends State<_RootRouter> {
       _posSub = socket.positions.listen(devices.applyLivePositions);
       _unauthSub = socket.unauthorized.listen((_) => authController.logout());
 
+      // Capture relay API reference before the async gap.
+      final relay = context.read<RelayApi>();
       Future.microtask(() async {
         try {
           await devices.refresh();
@@ -266,6 +313,7 @@ class _RootRouterState extends State<_RootRouter> {
           return;
         }
         await socket.connect();
+        _registerFcm(relay);
       });
     } else if (auth.phase == AuthPhase.loggedOut && _wired) {
       _wired = false;
@@ -273,6 +321,12 @@ class _RootRouterState extends State<_RootRouter> {
       _unauthSub?.cancel();
       socket.disconnect();
     }
+  }
+
+  void _registerFcm(RelayApi relay) {
+    final token = FcmService.token;
+    if (token == null) return;
+    relay.registerFcmToken(token).catchError((_) {});
   }
 
   @override
