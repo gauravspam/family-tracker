@@ -68,8 +68,9 @@ class FcmService : FirebaseMessagingService() {
         storage.approval = ApprovalStatus.APPROVED
         storage.ingestToken = token
         storage.ingestUrl = url
-        // Don't start LocationForegroundService — reporter stays idle until
-        // "live_mode" or "locate" command is received.
+        // Fetch a single position immediately so the admin sees coordinates,
+        // address, speed, accuracy and battery right after approval.
+        LocationForegroundService.startLocate(applicationContext)
     }
 
     private fun handleLocate(storage: Storage) {

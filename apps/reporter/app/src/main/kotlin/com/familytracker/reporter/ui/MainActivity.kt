@@ -148,7 +148,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onApproved() {
-        LocationForegroundService.start(this)
+        LocationForegroundService.startLocate(this)
         WatchdogWorker.schedule(this)
         stopPolling()
         cancelRegistration()
