@@ -42,8 +42,8 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   late String? _avatarId;
   late String? _colorHex;
 
-  DeviceView get view {
-    final devices = context.watch<DevicesController>();
+  DeviceView _resolveView() {
+    final devices = context.read<DevicesController>();
     final match = devices.devices.where((d) => d.device.id == widget.view.device.id);
     if (match.isNotEmpty) return match.first;
     return widget.view;
@@ -52,9 +52,9 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   @override
   void initState() {
     super.initState();
-    _displayName = view.displayName;
-    _avatarId = view.device.avatarId;
-    _colorHex = view.device.colorHex;
+    _displayName = widget.view.displayName;
+    _avatarId = widget.view.device.avatarId;
+    _colorHex = widget.view.device.colorHex;
   }
 
   Future<void> _editAppearance() async {
@@ -78,7 +78,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
 
     try {
       await relay.setAppearance(
-        traccarDeviceId: view.device.id,
+        traccarDeviceId: widget.view.device.id,
         avatarId: result.avatarId,
         colorHex: result.colorHex,
       );
@@ -150,7 +150,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final devices = context.read<DevicesController>();
 
     try {
-      await relay.renameByTraccarId(view.device.id, newName);
+      await relay.renameByTraccarId(widget.view.device.id, newName);
       await devices.refresh();
       if (!mounted) return;
       setState(() {
@@ -183,7 +183,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     try {
       final expiresAt = DateTime.now().toUtc().add(const Duration(minutes: 30));
       await relay.triggerLive(
-        traccarDeviceId: view.device.id,
+        traccarDeviceId: widget.view.device.id,
         expiresAtUtc: expiresAt,
       );
       await devices.refresh();
@@ -208,14 +208,11 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     final relay = context.read<RelayApi>();
-    final devices = context.read<DevicesController>();
 
     try {
-      await relay.locateDevice(view.device.id);
-      await devices.refresh();
+      await relay.locateDevice(widget.view.device.id);
       if (!mounted) return;
       setState(() => _busy = false);
-      Navigator.of(context).pop();
       messenger.showSnackBar(
         const SnackBar(content: Text('Location refresh sent')),
       );
@@ -239,7 +236,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final devices = context.read<DevicesController>();
 
     try {
-      await relay.stopLive(view.device.id);
+      await relay.stopLive(widget.view.device.id);
       await devices.refresh();
       if (!mounted) return;
       navigator.pop();
@@ -264,7 +261,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final relay = context.read<RelayApi>();
 
     try {
-      await relay.ringDevice(view.device.id);
+      await relay.ringDevice(widget.view.device.id);
       if (!mounted) return;
       setState(() => _busy = false);
       messenger.showSnackBar(
@@ -314,7 +311,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final devices = context.read<DevicesController>();
 
     try {
-      await relay.removeByTraccarId(view.device.id);
+      await relay.removeByTraccarId(widget.view.device.id);
       await devices.refresh();
       if (!mounted) return;
       navigator.pop();
@@ -334,7 +331,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   }
 
   Future<void> _openDirections() async {
-    final p = view.position;
+    final p = _resolveView().position;
     if (p == null) return;
 
     // geo: URI is resolved by the system to whatever nav app the user prefers
@@ -364,6 +361,9 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final devices = context.watch<DevicesController>();
+    final byId = devices.devices.where((d) => d.device.id == widget.view.device.id);
+    final view = byId.isNotEmpty ? byId.first : widget.view;
     final p = view.position;
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;

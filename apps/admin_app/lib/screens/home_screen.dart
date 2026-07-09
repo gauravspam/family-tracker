@@ -406,8 +406,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = context.read<AuthController>();
     final devices = context.read<DevicesController>();
     final pending = context.read<PendingController>();
+    final relay = context.read<RelayApi>();
 
     try {
+      // Send locate to all approved devices (Device & Map tabs only)
+      if (_currentTab != 2) {
+        for (final d in devices.devices) {
+          try {
+            await relay.locateDevice(d.device.id);
+          } catch (_) {
+            // best-effort per device
+          }
+        }
+      }
       await devices.refresh();
       await pending.refresh();
     } on TraccarUnauthorized {
