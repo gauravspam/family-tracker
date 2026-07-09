@@ -41,10 +41,11 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   late String _displayName;
   late String? _avatarId;
   late String? _colorHex;
+  late DevicesController _devicesCtrl;
+  late VoidCallback _onDevicesChange;
 
-  DeviceView _resolveView() {
-    final devices = context.read<DevicesController>();
-    final match = devices.devices.where((d) => d.device.id == widget.view.device.id);
+  DeviceView get _view {
+    final match = _devicesCtrl.devices.where((d) => d.device.id == widget.view.device.id);
     if (match.isNotEmpty) return match.first;
     return widget.view;
   }
@@ -55,6 +56,17 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     _displayName = widget.view.displayName;
     _avatarId = widget.view.device.avatarId;
     _colorHex = widget.view.device.colorHex;
+    _devicesCtrl = context.read<DevicesController>();
+    _onDevicesChange = () {
+      if (mounted) setState(() {});
+    };
+    _devicesCtrl.addListener(_onDevicesChange);
+  }
+
+  @override
+  void dispose() {
+    _devicesCtrl.removeListener(_onDevicesChange);
+    super.dispose();
   }
 
   Future<void> _editAppearance() async {
@@ -208,9 +220,16 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     final relay = context.read<RelayApi>();
+    final devices = context.read<DevicesController>();
 
     try {
       await relay.locateDevice(widget.view.device.id);
+
+      // Give the reporter a moment to acquire GPS and push to Traccar,
+      // then refresh so the sheet picks up the updated position.
+      await Future.delayed(const Duration(seconds: 3));
+      await devices.refresh();
+
       if (!mounted) return;
       setState(() => _busy = false);
       messenger.showSnackBar(
@@ -331,7 +350,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   }
 
   Future<void> _openDirections() async {
-    final p = _resolveView().position;
+    final p = _view.position;
     if (p == null) return;
 
     // geo: URI is resolved by the system to whatever nav app the user prefers
@@ -361,9 +380,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final devices = context.watch<DevicesController>();
-    final byId = devices.devices.where((d) => d.device.id == widget.view.device.id);
-    final view = byId.isNotEmpty ? byId.first : widget.view;
+    final view = _view;
     final p = view.position;
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
