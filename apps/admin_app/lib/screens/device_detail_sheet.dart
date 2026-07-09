@@ -42,7 +42,12 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
   late String? _avatarId;
   late String? _colorHex;
 
-  DeviceView get view => widget.view;
+  DeviceView get view {
+    final devices = context.watch<DevicesController>();
+    final match = devices.devices.where((d) => d.device.id == widget.view.device.id);
+    if (match.isNotEmpty) return match.first;
+    return widget.view;
+  }
 
   @override
   void initState() {
@@ -203,11 +208,14 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     final relay = context.read<RelayApi>();
+    final devices = context.read<DevicesController>();
 
     try {
       await relay.locateDevice(view.device.id);
+      await devices.refresh();
       if (!mounted) return;
       setState(() => _busy = false);
+      Navigator.of(context).pop();
       messenger.showSnackBar(
         const SnackBar(content: Text('Location refresh sent')),
       );

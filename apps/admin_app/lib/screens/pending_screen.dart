@@ -7,6 +7,7 @@ import 'package:tracker_core/tracker_core.dart';
 
 import '../api/relay_api.dart';
 import '../auth/auth_controller.dart';
+import '../state/devices_controller.dart';
 import '../state/pending_controller.dart';
 
 class PendingScreen extends StatefulWidget {
@@ -66,6 +67,8 @@ class _PendingScreenState extends State<PendingScreen> with WidgetsBindingObserv
     final messenger = ScaffoldMessenger.of(context);
     try {
       await context.read<PendingController>().approve(d.id, name: name);
+      await context.read<DevicesController>().refresh();
+      if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text('Approved as "$name"')),
       );
