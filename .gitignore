@@ -1,3 +1,7 @@
+# ── APK / Binaries ──────────────────────────────────
+*.apk
+services/notify_relay/notify_relay
+
 # ── Flutter/Dart ────────────────────────────────────
 **/build/
 **/.dart_tool/

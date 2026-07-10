@@ -181,6 +181,7 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
 
   void _onTick(Duration _) {
     if (!mounted) return;
+    if (_followingId == null) return;
     _maybeFollow();
     setState(() {});
   }

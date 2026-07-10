@@ -2,7 +2,7 @@ name: admin_app
 description: Family Tracker Admin App
 publish_to: none
 
-version: 1.0.0+1
+version: 3.0.0+1
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -40,6 +40,7 @@ dependencies:
   url_launcher: ^6.3.0
   package_info_plus: ^8.1.1
   flutter_svg: ^2.0.10+1
+  path_provider: ^2.1.4
 
 dev_dependencies:
   flutter_test:

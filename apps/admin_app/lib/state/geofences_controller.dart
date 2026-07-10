@@ -17,6 +17,10 @@ class GeofencesController extends ChangeNotifier {
   GeofencesPhase get phase => _phase;
   List<TraccarGeofence> get list => _list;
   String? get lastError => _lastError;
+  DateTime? _lastFetchedAt;
+  DateTime? get lastFetchedAt => _lastFetchedAt;
+  bool get isStale => _lastFetchedAt != null &&
+      DateTime.now().difference(_lastFetchedAt!) > const Duration(minutes: 5);
 
   Future<void> refresh() async {
     _phase = GeofencesPhase.loading;
@@ -27,6 +31,7 @@ class GeofencesController extends ChangeNotifier {
       final raw = await _api.listGeofences();
       _list = raw.map(TraccarGeofence.fromJson).toList();
       _phase = GeofencesPhase.ready;
+      _lastFetchedAt = DateTime.now();
       notifyListeners();
     } catch (e) {
       _lastError = e.toString();

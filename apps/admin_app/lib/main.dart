@@ -14,12 +14,14 @@ import 'config/server_config.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/server_setup_screen.dart';
+import 'services/connectivity_monitor.dart';
 import 'services/fcm_service.dart';
 import 'state/devices_controller.dart';
 import 'state/geofences_controller.dart';
 import 'state/hidden_devices_controller.dart';
 import 'state/pending_controller.dart';
 import 'state/theme_controller.dart';
+import 'utils/crash_log.dart';
 import 'ws/traccar_socket.dart';
 
 /// Top-level background message handler (must not be a class method).
@@ -62,6 +64,11 @@ void main() async {
     await FcmService.init();
   } catch (_) {
     // Firebase unavailable — FCM alerts won't work, app continues normally.
+  }
+  try {
+    await CrashLog.init();
+  } catch (_) {
+    // Crash reporting unavailable — app continues normally.
   }
   runApp(const AdminApp());
 }
@@ -195,6 +202,7 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
   late final TraccarApi _traccarApi;
   late final RelayApi _relayApi;
   late final TraccarSocket _socket;
+  late final ConnectivityMonitor _connectivity;
 
   @override
   void initState() {
@@ -212,10 +220,12 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
       wsUrl: widget.urls.traccarWsUrl,
       storage: _sessionStorage,
     );
+    _connectivity = ConnectivityMonitor(widget.urls.relayBaseUrl);
   }
 
   @override
   void dispose() {
+    _connectivity.dispose();
     _socket.dispose();
     super.dispose();
   }
@@ -238,6 +248,7 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
         ChangeNotifierProvider(create: (_) => DevicesController(_traccarApi, _relayApi)),
         ChangeNotifierProvider(create: (_) => PendingController(_relayApi)),
         ChangeNotifierProvider<TraccarSocket>.value(value: _socket),
+        ChangeNotifierProvider<ConnectivityMonitor>.value(value: _connectivity),
         ChangeNotifierProvider<ThemeController>.value(value: widget.themeController),
         ChangeNotifierProvider(create: (_) => GeofencesController(_traccarApi)),
         ChangeNotifierProvider(create: (_) => HiddenDevicesController()),
@@ -297,6 +308,8 @@ class _RootRouterState extends State<_RootRouter> {
       _posSub = socket.positions.listen(devices.applyLivePositions);
       _unauthSub = socket.unauthorized.listen((_) => authController.logout());
 
+      context.read<ConnectivityMonitor>().start();
+
       // Capture relay API reference before the async gap.
       final relay = context.read<RelayApi>();
       Future.microtask(() async {
@@ -319,6 +332,7 @@ class _RootRouterState extends State<_RootRouter> {
       _wired = false;
       _posSub?.cancel();
       _unauthSub?.cancel();
+      context.read<ConnectivityMonitor>().stop();
       socket.disconnect();
     }
   }

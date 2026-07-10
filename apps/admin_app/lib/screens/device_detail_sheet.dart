@@ -198,7 +198,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
         traccarDeviceId: widget.view.device.id,
         expiresAtUtc: expiresAt,
       );
-      await devices.refresh();
+      await devices.refresh(force: true);
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(
@@ -263,7 +263,7 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
 
     try {
       await relay.stopLive(widget.view.device.id);
-      await devices.refresh();
+      await devices.refresh(force: true);
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(
@@ -548,6 +548,14 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
                       label: 'Battery',
                       value: '${p.batteryPercent}%',
                       valueColor: p.isLowBattery ? Colors.red : null,
+                    ),
+                  ],
+                  if (p.activityLabel != null && widget.view.isLive) ...[
+                    _Divider(),
+                    _InfoRow(
+                      icon: Icons.directions_run,
+                      label: 'Activity',
+                      value: p.activityLabel!.replaceAll('_', ' '),
                     ),
                   ],
                 ],

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../auth/session_storage.dart';
 import '../config/server_config.dart';
+import '../utils/crash_log.dart';
 import 'server_setup_screen.dart';
 import '../ws/traccar_socket.dart';
 
@@ -104,6 +105,9 @@ class _AboutScreenState extends State<AboutScreen> {
               const SizedBox(height: 24),
               _sectionHeader(context, 'Live'),
               _liveConnection(context),
+              const SizedBox(height: 24),
+              _sectionHeader(context, 'Troubleshooting'),
+              _crashLogSection(context),
             ],
           );
         },
@@ -239,6 +243,74 @@ class _AboutScreenState extends State<AboutScreen> {
     if (d.inSeconds < 60) return '${d.inSeconds}s ago';
     if (d.inMinutes < 60) return '${d.inMinutes}m ago';
     return '${d.inHours}h ago';
+  }
+
+  Widget _crashLogSection(BuildContext ctx) {
+    return FutureBuilder<String>(
+      future: CrashLog.read(),
+      builder: (ctx, snapshot) {
+        final log = snapshot.data ?? '';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextButton.icon(
+              onPressed: () => _showCrashLog(ctx, log),
+              icon: const Icon(Icons.bug_report_outlined, size: 16),
+              label: const Text('View crash log'),
+            ),
+            if (log.isNotEmpty)
+              TextButton.icon(
+                onPressed: () async {
+                  await CrashLog.clear();
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('Crash log cleared')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('Clear crash log'),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Text(
+                  'No crashes recorded',
+                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showCrashLog(BuildContext ctx, String log) {
+    showDialog(
+      context: ctx,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Crash Log'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: log.isEmpty
+              ? const Text('No crashes recorded')
+              : SingleChildScrollView(
+                  child: SelectableText(
+                    log,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

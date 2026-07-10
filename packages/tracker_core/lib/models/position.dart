@@ -68,4 +68,8 @@ class TraccarPosition {
     final b = batteryPercent;
     return b != null && b < 20;
   }
+
+  /// Detected activity label ("still", "walking", "in_vehicle", etc.)
+  /// or null if the reporter does not support activity detection.
+  String? get activityLabel => attributes['activity'] as String?;
 }

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:tracker_core/tracker_core.dart';
 
 import '../auth/session_storage.dart';
+import '../models/geofence_event.dart';
 
 class RelayUnauthorized implements Exception {
   @override
@@ -127,6 +128,22 @@ class RelayApi {
       options: Options(contentType: Headers.jsonContentType),
     );
     _checkStatus(r);
+  }
+
+  Future<List<GeofenceEvent>> listGeofenceEvents({
+    int? traccarDeviceId,
+    int? geofenceId,
+    int limit = 500,
+  }) async {
+    final params = <String, dynamic>{'limit': limit};
+    if (traccarDeviceId != null) params['traccarDeviceId'] = traccarDeviceId;
+    if (geofenceId != null) params['geofenceId'] = geofenceId;
+    final r = await _dio.get('/admin/geofence_events', queryParameters: params);
+    _checkStatus(r);
+    final text = (r.data as String).trim();
+    final decoded = jsonDecode(text) as Map<String, dynamic>;
+    final list = decoded['events'] as List<dynamic>;
+    return list.map((e) => GeofenceEvent.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   // ── helpers ──

@@ -60,6 +60,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/admin/ring/{deviceId}", h.ring)
 		r.Post("/admin/locate/{deviceId}", h.locate)
 		r.Post("/admin/fcm-token", h.registerAdminFCM)
+		r.Get("/admin/geofence_events", h.listGeofenceEvents)
 	})
 
 	r.Post("/webhook/traccar/event", h.traccarWebhook)
@@ -311,6 +312,11 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		IngestToken:     &tokenStr,
 	}); err != nil {
 		log.Printf("InsertReporterMeta: %v", err)
+		// Roll back: delete Traccar device and revert approval
+		_ = h.tc.DeleteDevice(ctx, dev.ID)
+		_ = h.st.RevertApprovePendingDevice(ctx, pid)
+		jsonErr(w, 500, "internal error")
+		return
 	}
 
 	if err := h.fc.SendData(ctx, pending.FCMToken, map[string]string{
@@ -552,16 +558,30 @@ func (h *Handler) traccarWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 401, "invalid secret")
 		return
 	}
-	var ev struct {
-		DeviceID   int64                  `json:"deviceId"`
-		Type       string                 `json:"type"`
-		GeofenceID *int64                 `json:"geofenceId"`
-		Attributes map[string]interface{} `json:"attributes"`
+	var payload struct {
+		Event struct {
+			DeviceID   int64  `json:"deviceId"`
+			Type       string `json:"type"`
+			GeofenceID *int64 `json:"geofenceId"`
+		} `json:"event"`
+		Device struct {
+			Name string `json:"name"`
+		} `json:"device"`
+		Geofence struct {
+			Name string `json:"name"`
+		} `json:"geofence"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		jsonErr(w, 400, "invalid json")
 		return
 	}
+
+	deviceID := payload.Event.DeviceID
+	eventType := payload.Event.Type
+	geofenceID := payload.Event.GeofenceID
+	deviceName := payload.Device.Name
+	geoName := payload.Geofence.Name
+
 	ctx := r.Context()
 
 	tokens, err := h.st.AllAdminTokens(ctx)
@@ -571,55 +591,95 @@ func (h *Handler) traccarWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if deviceName == "" {
+		deviceName = fmt.Sprintf("Device %d", deviceID)
+		if dev, err := h.tc.GetDevice(ctx, deviceID); err == nil {
+			deviceName = dev.Name
+		} else {
+			log.Printf("GetDevice(%d): %v — trying pending device model", deviceID, err)
+			if pending, err2 := h.st.GetPendingDeviceByTraccarID(ctx, deviceID); err2 == nil && pending.DeviceModel != "" {
+				deviceName = pending.DeviceModel
+			}
+		}
+	}
+	isGeofenceEvent := geofenceID != nil && *geofenceID > 0
+
+	if isGeofenceEvent && geoName == "" {
+		geoName = fmt.Sprintf("Geofence %d", *geofenceID)
+	}
+
 	data := map[string]string{
-		"deviceId":  strconv.FormatInt(ev.DeviceID, 10),
-		"eventType": ev.Type,
+		"deviceId":   strconv.FormatInt(deviceID, 10),
+		"eventType":  eventType,
+		"deviceName": deviceName,
 	}
-	if ev.GeofenceID != nil {
-		data["geofenceId"] = strconv.FormatInt(*ev.GeofenceID, 10)
-	}
-
-	// Resolve device name
-	deviceName := fmt.Sprintf("Device %d", ev.DeviceID)
-	if dev, err := h.tc.GetDevice(ctx, ev.DeviceID); err == nil {
-		deviceName = dev.Name
-	} else {
-		log.Printf("GetDevice(%d): %v — trying pending device model", ev.DeviceID, err)
-		if pending, err2 := h.st.GetPendingDeviceByTraccarID(ctx, ev.DeviceID); err2 == nil && pending.DeviceModel != "" {
-			deviceName = pending.DeviceModel
-		}
-	}
-	data["deviceName"] = deviceName
-
-	// Resolve geofence name
-	geoName := ""
-	if ev.Attributes != nil {
-		if n, ok := ev.Attributes["geofenceName"].(string); ok {
-			geoName = n
-		}
-	}
-	if geoName == "" && ev.GeofenceID != nil {
-		geoName = fmt.Sprintf("Geofence %d", *ev.GeofenceID)
-	}
-	if geoName != "" {
+	if isGeofenceEvent {
+		data["geofenceId"] = strconv.FormatInt(*geofenceID, 10)
 		data["geofenceName"] = geoName
-	}
 
-	// Deterministic title for notification
-	isEnter := ev.Type == "geofenceEnter"
-	if isEnter {
-		data["title"] = "Entered " + geoName
-	} else {
-		data["title"] = "Exited " + geoName
+		isEnter := eventType == "geofenceEnter"
+		if isEnter {
+			data["title"] = "Entered " + geoName
+		} else {
+			data["title"] = "Exited " + geoName
+		}
 	}
 	data["body"] = deviceName
 
 	if err := h.fc.SendToMany(ctx, tokens, data); err != nil {
 		log.Printf("SendToMany: %v", err)
 	}
+
+	// Persist geofence events for history & analytics
+	if isGeofenceEvent {
+		geoEv := store.GeofenceEvent{
+			TraccarID:    deviceID,
+			GeofenceID:   *geofenceID,
+			GeofenceName: geoName,
+			EventType:    eventType,
+			DeviceName:   deviceName,
+		}
+		if err := h.st.InsertGeofenceEvent(ctx, geoEv); err != nil {
+			log.Printf("InsertGeofenceEvent: %v", err)
+		}
+	}
 	w.WriteHeader(200)
 }
 
+// ── GET /admin/geofence-events ──
+
+func (h *Handler) listGeofenceEvents(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	filter := store.GeofenceEventFilter{
+		Limit: 500,
+	}
+	if tidStr := r.URL.Query().Get("traccarDeviceId"); tidStr != "" {
+		if tid, err := strconv.ParseInt(tidStr, 10, 64); err == nil {
+			filter.TraccarID = &tid
+		}
+	}
+	if gidStr := r.URL.Query().Get("geofenceId"); gidStr != "" {
+		if gid, err := strconv.ParseInt(gidStr, 10, 64); err == nil {
+			filter.GeofenceID = &gid
+		}
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 2000 {
+			filter.Limit = l
+		}
+	}
+
+	events, err := h.st.ListGeofenceEvents(ctx, filter)
+	if err != nil {
+		log.Printf("ListGeofenceEvents: %v", err)
+		jsonErr(w, 500, "internal error")
+		return
+	}
+	if events == nil {
+		events = []store.GeofenceEvent{}
+	}
+	jsonOK(w, map[string]any{"events": events})
+}
 
 // ── PUT /admin/rename/{traccarId} ──
 

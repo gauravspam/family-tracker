@@ -27,12 +27,18 @@ class DevicesController extends ChangeNotifier {
 
   /// Max age of trail positions. Older points are discarded on new arrival.
   static const Duration _trailMaxAge = Duration(minutes: 30);
+  static const Duration _throttleDuration = Duration(seconds: 60);
   String? _lastError;
+  DateTime? _lastRefreshAt;
+  bool _refreshing = false;
 
   DevicesController(this._traccar, this._relay);
 
   DevicesPhase get phase => _phase;
   String? get lastError => _lastError;
+  DateTime? get lastFetchedAt => _lastRefreshAt;
+  bool get isStale => _lastRefreshAt != null &&
+      DateTime.now().difference(_lastRefreshAt!) > const Duration(minutes: 5);
 
   /// Last N positions for [traccarDeviceId], oldest first. Empty if none.
   List<TraccarPosition> trailFor(int traccarDeviceId) =>
@@ -53,7 +59,14 @@ class DevicesController extends ChangeNotifier {
     return list;
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh({bool force = false}) async {
+    if (_refreshing) return;
+    if (!force &&
+        _lastRefreshAt != null &&
+        DateTime.now().difference(_lastRefreshAt!) < _throttleDuration) {
+      return;
+    }
+    _refreshing = true;
     _phase = DevicesPhase.loading;
     _lastError = null;
     notifyListeners();
@@ -84,6 +97,7 @@ class DevicesController extends ChangeNotifier {
         ..addEntries(approvedList.map((a) => MapEntry(a.traccarDeviceId, a)));
 
       _phase = DevicesPhase.ready;
+      _lastRefreshAt = DateTime.now();
       notifyListeners();
     } on TraccarUnauthorized {
       rethrow;
@@ -96,6 +110,8 @@ class DevicesController extends ChangeNotifier {
       // hiccups.
       _phase = _devicesById.isEmpty ? DevicesPhase.error : DevicesPhase.ready;
       notifyListeners();
+    } finally {
+      _refreshing = false;
     }
   }
 

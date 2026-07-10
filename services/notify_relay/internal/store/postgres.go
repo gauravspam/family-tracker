@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -155,6 +156,14 @@ func (s *Store) ApprovePendingDevice(ctx context.Context, id, traccarID int64) e
 	return err
 }
 
+func (s *Store) RevertApprovePendingDevice(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE pending_devices
+		SET status = 'pending', traccar_device_id = NULL, updated_at = now()
+		WHERE id = $1`, id)
+	return err
+}
+
 func (s *Store) SetPendingStatus(ctx context.Context, id int64, status ApprovalStatus) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE pending_devices SET status = $2, updated_at = now()
@@ -299,6 +308,74 @@ func (s *Store) UpdateReporterFCMToken(ctx context.Context, traccarID int64, fcm
 		SET fcm_token = $2, updated_at = now()
 		WHERE traccar_device_id = $1`, traccarID, fcmToken)
 	return err
+}
+
+// ── Geofence events ──
+
+type GeofenceEvent struct {
+	ID           int64     `json:"id"`
+	TraccarID    int64     `json:"traccarDeviceId"`
+	GeofenceID   int64     `json:"geofenceId"`
+	GeofenceName string    `json:"geofenceName"`
+	EventType    string    `json:"eventType"`
+	DeviceName   string    `json:"deviceName"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+func (s *Store) InsertGeofenceEvent(ctx context.Context, ev GeofenceEvent) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO geofence_events (traccar_device_id, geofence_id, geofence_name, event_type, device_name)
+		VALUES ($1, $2, $3, $4, $5)`,
+		ev.TraccarID, ev.GeofenceID, ev.GeofenceName, ev.EventType, ev.DeviceName)
+	return err
+}
+
+type GeofenceEventFilter struct {
+	TraccarID *int64
+	GeofenceID *int64
+	Limit     int
+}
+
+func (s *Store) ListGeofenceEvents(ctx context.Context, filter GeofenceEventFilter) ([]GeofenceEvent, error) {
+	q := `SELECT id, traccar_device_id, geofence_id, geofence_name, event_type, device_name, created_at
+		FROM geofence_events WHERE 1=1`
+	args := make([]any, 0)
+	argIdx := 1
+
+	if filter.TraccarID != nil {
+		q += fmt.Sprintf(` AND traccar_device_id = $%d`, argIdx)
+		args = append(args, *filter.TraccarID)
+		argIdx++
+	}
+	if filter.GeofenceID != nil {
+		q += fmt.Sprintf(` AND geofence_id = $%d`, argIdx)
+		args = append(args, *filter.GeofenceID)
+		argIdx++
+	}
+
+	q += ` ORDER BY created_at DESC`
+
+	if filter.Limit > 0 {
+		q += fmt.Sprintf(` LIMIT $%d`, argIdx)
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []GeofenceEvent
+	for rows.Next() {
+		var e GeofenceEvent
+		if err := rows.Scan(&e.ID, &e.TraccarID, &e.GeofenceID, &e.GeofenceName,
+			&e.EventType, &e.DeviceName, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 var ErrNoRows = pgx.ErrNoRows

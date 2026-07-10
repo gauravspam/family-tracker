@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../api/relay_api.dart';
 import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
+import '../services/connectivity_monitor.dart';
 import '../state/devices_controller.dart';
 import '../state/geofences_controller.dart';
 import '../state/hidden_devices_controller.dart';
@@ -119,15 +120,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onTabSelected(int index) {
-    Future.microtask(() {
+    Future.microtask(() async {
       if (!mounted) return;
-      switch (index) {
-        case 0:
-          context.read<DevicesController>().refresh();
-        case 1:
-          _loadGeofences();
-        case 2:
-          context.read<PendingController>().refresh();
+      final cm = context.read<ConnectivityMonitor>();
+      try {
+        switch (index) {
+          case 0:
+            await context.read<DevicesController>().refresh();
+          case 1:
+            _loadGeofences();
+          case 2:
+            await context.read<PendingController>().refresh();
+        }
+        cm.reportSuccess();
+      } catch (_) {
+        cm.reportFailure();
       }
     });
   }
@@ -407,6 +414,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final devices = context.read<DevicesController>();
     final pending = context.read<PendingController>();
     final relay = context.read<RelayApi>();
+    final cm = context.read<ConnectivityMonitor>();
 
     try {
       // Send locate to all approved devices (Device & Map tabs only)
@@ -419,18 +427,24 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
       }
-      await devices.refresh();
+      await devices.refresh(force: true);
       await pending.refresh();
+      cm.reportSuccess();
     } on TraccarUnauthorized {
       await auth.logout();
     } on RelayUnauthorized {
       await auth.logout();
+    } catch (_) {
+      cm.reportFailure();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+
+    final cm = context.watch<ConnectivityMonitor>();
+    final headerTop = cm.isOnline ? 0.0 : 72.0;
 
     return Scaffold(
       extendBody: true,
@@ -441,7 +455,6 @@ class _HomeScreenState extends State<HomeScreen> {
           PageView(
             controller: _pageController,
             onPageChanged: _onPageChanged,
-            // Disable swipe on map tab to avoid fighting with map pan
             physics: _currentTab == 1
                 ? const NeverScrollableScrollPhysics()
                 : const BouncingScrollPhysics(),
@@ -463,9 +476,18 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
+          // ── Connectivity banner ────────────────────────────────────
+          if (!cm.isOnline)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _ConnectivityBanner(),
+            ),
+
           // ── Header ────────────────────────────────────────────────
           Positioned(
-            top: 0,
+            top: headerTop,
             left: 0,
             right: 0,
             child: _FloatingHeader(
@@ -794,6 +816,65 @@ class _PillNavItem extends StatelessWidget {
                 color: textColor,
                 fontSize: 11,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Connectivity Banner ────────────────────────────────────────────────
+
+class _ConnectivityBanner extends StatelessWidget {
+  const _ConnectivityBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final topPadding = MediaQuery.of(context).viewPadding.top;
+    final cm = context.watch<ConnectivityMonitor>();
+    final since = cm.offlineSince;
+    final sec = since.inSeconds;
+    final label = sec < 60
+        ? '${sec}s'
+        : '${since.inMinutes}m ${sec % 60}s';
+
+    return Material(
+      child: Container(
+        padding: EdgeInsets.only(top: topPadding + 4, bottom: 10),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFDC2626), Color(0xFFB91C1C)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(height: topPadding > 0 ? 0 : 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.wifi_off_rounded, color: Colors.white.withValues(alpha: 0.9), size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'No internet connection',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.95),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Showing last known data — offline for $label',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.7),
+                fontSize: 11,
               ),
             ),
           ],

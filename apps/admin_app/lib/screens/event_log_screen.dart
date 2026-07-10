@@ -1,11 +1,9 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../api/traccar_api.dart';
-import '../state/devices_controller.dart';
-import '../state/geofences_controller.dart';
+import '../api/relay_api.dart';
+import '../models/geofence_event.dart';
+import '../services/connectivity_monitor.dart';
 
 class EventLogScreen extends StatefulWidget {
   const EventLogScreen({super.key});
@@ -15,7 +13,7 @@ class EventLogScreen extends StatefulWidget {
 }
 
 class _EventLogScreenState extends State<EventLogScreen> {
-  List<_EventItem> _events = [];
+  List<GeofenceEvent> _events = [];
   bool _loading = true;
   String? _error;
 
@@ -31,55 +29,11 @@ class _EventLogScreenState extends State<EventLogScreen> {
       _error = null;
     });
     try {
-      final api = context.read<TraccarApi>();
-      final dc = context.read<DevicesController>();
-      final deviceIds = dc.devices.map((d) => d.device.id).toList();
-      final raw = await api.listEvents(
-        deviceId: deviceIds,
-        type: const ['geofenceEnter', 'geofenceExit'],
-        from: DateTime.now().subtract(const Duration(days: 7)),
-        to: DateTime.now(),
-      );
-      if (!mounted) return;
-      final gc = context.read<GeofencesController>();
-      final items = raw.map((e) {
-        final type = e['type'] as String? ?? 'unknown';
-        final deviceId = e['deviceId'] as int?;
-        final geofenceId = e['geofenceId'] as int?;
-        final rawAttrs = e['attributes'];
-        Map<String, dynamic> attrs = {};
-        if (rawAttrs is Map) {
-          attrs = Map<String, dynamic>.from(rawAttrs);
-        } else if (rawAttrs is String && rawAttrs.isNotEmpty) {
-          try {
-            final decoded = jsonDecode(rawAttrs);
-            if (decoded is Map) attrs = Map<String, dynamic>.from(decoded);
-          } catch (_) {}
-        }
-        final geoName = attrs['geofenceName']?.toString();
-        final foundGeo = geofenceId != null
-            ? gc.list.where((g) => g.id == geofenceId).firstOrNull
-            : null;
-        final geofenceName = geoName ?? foundGeo?.name ?? 'Geofence #$geofenceId';
-        final deviceName = deviceId != null
-            ? dc.devices.where((d) => d.device.id == deviceId).map((d) => d.displayName).firstOrNull
-            : null;
-        final time = e['serverTime'] as String? ?? e['eventTime'] as String?;
-        return _EventItem(
-          type: type == 'geofenceEnter' ? _EventType.enter : _EventType.exit,
-          geofenceName: geofenceName,
-          deviceName: deviceName ?? 'Device #$deviceId',
-          time: time != null ? DateTime.tryParse(time) : null,
-        );
-      }).toList();
-      items.sort((a, b) {
-        final ta = a.time ?? DateTime(2000);
-        final tb = b.time ?? DateTime(2000);
-        return tb.compareTo(ta);
-      });
+      final relay = context.read<RelayApi>();
+      final events = await relay.listGeofenceEvents();
       if (!mounted) return;
       setState(() {
-        _events = items;
+        _events = events;
         _loading = false;
       });
     } catch (e) {
@@ -94,6 +48,90 @@ class _EventLogScreenState extends State<EventLogScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final hasCached = _events.isNotEmpty;
+
+    Widget body;
+    if (_loading && !hasCached) {
+      body = const Center(child: CircularProgressIndicator());
+    } else if (_error != null && !hasCached) {
+      body = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: scheme.error, size: 48),
+            const SizedBox(height: 12),
+            Text('Failed to load events',
+                style: TextStyle(color: scheme.error)),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                _error!,
+                style: TextStyle(color: scheme.error, fontSize: 12),
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _load, child: const Text('Retry')),
+          ],
+        ),
+      );
+    } else if (_events.isEmpty) {
+      body = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.event_busy,
+                size: 48, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 12),
+            Text('No geofence events recorded yet',
+                style: TextStyle(color: scheme.onSurfaceVariant)),
+            const SizedBox(height: 4),
+            Text(
+              'Events are captured when the webhook fires',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    } else {
+      body = RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: _events.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (_, i) {
+            final e = _events[i];
+            return ListTile(
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: (e.isEnter ? Colors.green : Colors.red)
+                    .withValues(alpha: 0.15),
+                child: Icon(
+                  e.isEnter ? Icons.login : Icons.logout,
+                  color: e.isEnter ? Colors.green.shade700 : Colors.red.shade400,
+                  size: 20,
+                ),
+              ),
+              title: Text(
+                '${e.label} ${e.geofenceName}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                '${e.deviceName} · ${_formatTime(e.createdAt)}',
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Geofence Events'),
@@ -104,80 +142,32 @@ class _EventLogScreenState extends State<EventLogScreen> {
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.error_outline, color: scheme.error, size: 48),
-                          const SizedBox(height: 12),
-                          Text('Failed to load events',
-                              style: TextStyle(color: scheme.error)),
-                          const SizedBox(height: 4),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            child: Text(
-                              _error!,
-                              style: TextStyle(color: scheme.error, fontSize: 12),
-                              textAlign: TextAlign.center,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton(onPressed: _load, child: const Text('Retry')),
-                        ],
-                      ),
-                    )
-              : _events.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.event_busy,
-                              size: 48, color: scheme.onSurfaceVariant),
-                          const SizedBox(height: 12),
-                          Text('No geofence events in the last 7 days',
-                              style: TextStyle(color: scheme.onSurfaceVariant)),
-                        ],
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        itemCount: _events.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) {
-                          final e = _events[i];
-                          final isEnter = e.type == _EventType.enter;
-                          return ListTile(
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            leading: CircleAvatar(
-                              radius: 18,
-                              backgroundColor: (isEnter ? Colors.green : Colors.red)
-                                  .withValues(alpha: 0.15),
-                              child: Icon(
-                                isEnter ? Icons.login : Icons.logout,
-                                color: isEnter ? Colors.green.shade700 : Colors.red.shade400,
-                                size: 20,
-                              ),
-                            ),
-                            title: Text(
-                              isEnter ? 'Entered ${e.geofenceName}' : 'Exited ${e.geofenceName}',
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(
-                              '${e.deviceName}${e.time != null ? ' · ${_formatTime(e.time!)}' : ''}',
-                              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                            ),
-                          );
-                        },
-                      ),
+      body: Column(
+        children: [
+          // Stale data banner when offline
+          Consumer<ConnectivityMonitor>(
+            builder: (context, cm, _) {
+              if (cm.isOnline || !hasCached) return const SizedBox.shrink();
+              return Container(
+                width: double.infinity,
+                color: Colors.orange.withValues(alpha: 0.1),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud_off, size: 14, color: Colors.orange.shade700),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Showing cached events — offline',
+                      style: TextStyle(color: Colors.orange.shade700, fontSize: 11),
                     ),
+                  ],
+                ),
+              );
+            },
+          ),
+          Expanded(child: body),
+        ],
+      ),
     );
   }
 
@@ -189,19 +179,4 @@ class _EventLogScreenState extends State<EventLogScreen> {
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     return '${diff.inDays}d ago';
   }
-}
-
-enum _EventType { enter, exit }
-
-class _EventItem {
-  final _EventType type;
-  final String geofenceName;
-  final String deviceName;
-  final DateTime? time;
-  const _EventItem({
-    required this.type,
-    required this.geofenceName,
-    required this.deviceName,
-    this.time,
-  });
 }

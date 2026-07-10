@@ -5,6 +5,7 @@ import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../appearance/avatar_widget.dart';
 import '../models/device_view.dart';
+import '../services/connectivity_monitor.dart';
 import '../state/devices_controller.dart';
 import '../state/hidden_devices_controller.dart';
 import '../ws/traccar_socket.dart';
@@ -36,6 +37,7 @@ class DevicesScreen extends StatelessWidget {
         return Column(
           children: [
             const _ConnectionBanner(),
+            _StaleDataBanner(controller: controller),
             _BatteryWarningBanner(devices: controller.devices),
             Expanded(
               child: RefreshIndicator(
@@ -115,6 +117,38 @@ class _ConnectionBanner extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _StaleDataBanner extends StatelessWidget {
+  final DevicesController controller;
+  const _StaleDataBanner({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final cm = context.watch<ConnectivityMonitor>();
+    if (cm.isOnline || controller.lastFetchedAt == null) {
+      return const SizedBox.shrink();
+    }
+    final ago = DateTime.now().difference(controller.lastFetchedAt!);
+    final label = ago.inMinutes < 1
+        ? '${ago.inSeconds}s ago'
+        : '${ago.inMinutes}m ${ago.inSeconds.remainder(60)}s ago';
+    return Container(
+      width: double.infinity,
+      color: Colors.orange.withValues(alpha: 0.1),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        children: [
+          Icon(Icons.access_time_rounded, size: 14, color: Colors.orange.shade700),
+          const SizedBox(width: 8),
+          Text(
+            'Showing cached data — last updated $label',
+            style: TextStyle(color: Colors.orange.shade700, fontSize: 11),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -47,6 +47,7 @@ class LocationForegroundService : Service() {
     private lateinit var osmand: OsmAndClient
     private lateinit var relay: RelayClient
     private lateinit var positionQueue: PositionQueue
+    private lateinit var activityDetector: ActivityDetector
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentInterval: Long = LIVE_INTERVAL_MS
@@ -74,6 +75,7 @@ class LocationForegroundService : Service() {
         osmand = OsmAndClient()
         relay = RelayClient()
         positionQueue = PositionQueue(this)
+        activityDetector = ActivityDetector()
         createNotificationChannel()
     }
 
@@ -81,8 +83,8 @@ class LocationForegroundService : Service() {
         if (intent?.getBooleanExtra(EXTRA_LOCATE, false) == true) {
             Log.i(tag, "Locate-once mode")
             startForegroundWithNotification()
-            requestSingleLocation()
-            return START_NOT_STICKY
+            requestSingleLocation(stopWhenDone = storage.mode != TrackingMode.LIVE)
+            return if (storage.mode == TrackingMode.LIVE) START_STICKY else START_NOT_STICKY
         }
 
         // Safety: if service was somehow started but mode is IDLE, stop immediately
@@ -145,7 +147,7 @@ class LocationForegroundService : Service() {
         }
     }
 
-    private fun requestSingleLocation() {
+    private fun requestSingleLocation(stopWhenDone: Boolean = true) {
         if (ContextCompat.checkSelfPermission(
                 this, Manifest.permission.ACCESS_FINE_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
@@ -173,13 +175,13 @@ class LocationForegroundService : Service() {
                             }
                         }
                     } finally {
-                        stopSelf()
+                        if (stopWhenDone) stopSelf()
                     }
                 }
             }
             .addOnFailureListener { e ->
                 Log.w(tag, "Single location failed", e)
-                stopSelf()
+                if (stopWhenDone) stopSelf()
             }
     }
 
@@ -192,6 +194,7 @@ class LocationForegroundService : Service() {
         }
         val batt = readBatteryLevel()
         val course = if (loc.hasBearing()) loc.bearing else 0f
+        activityDetector.onLocation(loc.speed)
 
         val posUrl = buildString {
             append(url.trimEnd('/'))
@@ -204,6 +207,7 @@ class LocationForegroundService : Service() {
             append("&speed=").append(if (loc.hasSpeed()) loc.speed else 0f)
             append("&bearing=").append(course)
             if (batt != null) append("&batt=").append(batt)
+            append("&activity=").append(activityDetector.currentLabel())
         }
 
         try {

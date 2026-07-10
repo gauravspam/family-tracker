@@ -17,6 +17,10 @@ class PendingController extends ChangeNotifier {
   PendingPhase get phase => _phase;
   List<PendingDevice> get items => _items;
   String? get lastError => _lastError;
+  DateTime? _lastFetchedAt;
+  DateTime? get lastFetchedAt => _lastFetchedAt;
+  bool get isStale => _lastFetchedAt != null &&
+      DateTime.now().difference(_lastFetchedAt!) > const Duration(minutes: 5);
 
   Future<void> refresh() async {
     _phase = PendingPhase.loading;
@@ -26,6 +30,7 @@ class PendingController extends ChangeNotifier {
     try {
       _items = await _api.listPending();
       _phase = PendingPhase.ready;
+      _lastFetchedAt = DateTime.now();
       notifyListeners();
     } on RelayUnauthorized {
       rethrow;
