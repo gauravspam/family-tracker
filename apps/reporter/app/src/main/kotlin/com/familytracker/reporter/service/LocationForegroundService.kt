@@ -157,11 +157,25 @@ class LocationForegroundService : Service() {
 
         fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
             .addOnSuccessListener { loc ->
-                if (loc != null) {
-                    Log.i(tag, "Single location obtained: ${loc.latitude},${loc.longitude}")
-                    postLocation(loc)
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        if (loc != null) {
+                            Log.i(tag, "Single location obtained: ${loc.latitude},${loc.longitude}")
+                            postLocation(loc)
+                        }
+                        // Drain any queued positions from previous failed attempts
+                        for (qUrl in positionQueue.drainAll()) {
+                            try {
+                                osmand.postUrl(qUrl)
+                            } catch (_: Exception) {
+                                positionQueue.enqueue(qUrl)
+                                break
+                            }
+                        }
+                    } finally {
+                        stopSelf()
+                    }
                 }
-                stopSelf()
             }
             .addOnFailureListener { e ->
                 Log.w(tag, "Single location failed", e)

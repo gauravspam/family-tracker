@@ -225,10 +225,17 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     try {
       await relay.locateDevice(widget.view.device.id);
 
-      // Give the reporter a moment to acquire GPS and push to Traccar,
-      // then refresh so the sheet picks up the updated position.
-      await Future.delayed(const Duration(seconds: 3));
-      await devices.refresh();
+      // The injected position arrives via Traccar WebSocket → applyLivePositions
+      // → notifyListeners → sheet rebuild.  But if the WebSocket is not connected
+      // or the reporter is slow, also poll a few times.
+      for (final delay in [2, 3, 5]) {
+        await Future.delayed(Duration(seconds: delay));
+        await devices.refresh();
+        if (_devicesCtrl.devices.any((d) =>
+            d.device.id == widget.view.device.id && d.position != null)) {
+          break;
+        }
+      }
 
       if (!mounted) return;
       setState(() => _busy = false);
