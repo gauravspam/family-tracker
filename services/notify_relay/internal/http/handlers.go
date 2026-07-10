@@ -583,6 +583,11 @@ func (h *Handler) traccarWebhook(w http.ResponseWriter, r *http.Request) {
 	deviceName := fmt.Sprintf("Device %d", ev.DeviceID)
 	if dev, err := h.tc.GetDevice(ctx, ev.DeviceID); err == nil {
 		deviceName = dev.Name
+	} else {
+		log.Printf("GetDevice(%d): %v — trying pending device model", ev.DeviceID, err)
+		if pending, err2 := h.st.GetPendingDeviceByTraccarID(ctx, ev.DeviceID); err2 == nil && pending.DeviceModel != "" {
+			deviceName = pending.DeviceModel
+		}
 	}
 	data["deviceName"] = deviceName
 
