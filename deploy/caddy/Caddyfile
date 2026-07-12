@@ -1,0 +1,17 @@
+# ---- Family Tracker Caddy config ----
+# Replace 'tracker.example.com' with your domain.
+
+tracker.example.com {
+    # Relay API (FCM proxy, admin API)
+    reverse_proxy relay:8080
+
+    # Traccar web interface on a sub-path
+    handle_path /traccar/* {
+        reverse_proxy traccar:8082
+    }
+}
+
+# Optional: direct Traccar subdomain
+# traccar.tracker.example.com {
+#     reverse_proxy traccar:8082
+# }

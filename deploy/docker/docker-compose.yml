@@ -34,6 +34,9 @@ services:
       - "5055:5055"
 
   relay:
+    build:
+      context: ../../services/notify_relay
+      dockerfile: Dockerfile
     image: ft_relay:latest
     container_name: ft_relay
     restart: unless-stopped
@@ -42,6 +45,8 @@ services:
         condition: service_healthy
     env_file:
       - ../../.env.relay
+    volumes:
+      - ../../secrets:/app/secrets:ro
     ports:
       - "127.0.0.1:8080:8080"
 
