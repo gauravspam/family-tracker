@@ -11,6 +11,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -43,6 +44,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var subtitleView: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var actionButton: Button
+    private lateinit var serverInput: EditText
+    private lateinit var secondaryButton: Button
+    private var secondaryAction: (() -> Unit)? = null
 
     private val requestCodeRuntime = 100
     private val requestCodeBackground = 101
@@ -50,7 +54,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         storage = Storage(this)
-        relay = RelayClient()
+        relay = RelayClient { storage.relayBaseUrl }
         buildUi()
         refresh()
     }
@@ -88,11 +92,22 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
             setOnClickListener { onActionClicked() }
         }
+        serverInput = EditText(this).apply {
+            visibility = View.GONE
+            hint = "http://192.168.1.37:8080"
+            setSingleLine()
+        }
+        secondaryButton = Button(this).apply {
+            visibility = View.GONE
+            setOnClickListener { secondaryAction?.invoke() }
+        }
 
         container.addView(titleView)
         container.addView(subtitleView)
+        container.addView(serverInput)
         container.addView(progressBar)
         container.addView(actionButton)
+        container.addView(secondaryButton)
         setContentView(container)
     }
 
@@ -111,6 +126,11 @@ class MainActivity : AppCompatActivity() {
         } else {
             actionButton.visibility = View.GONE
         }
+        // Any plain status screen hides the server field + secondary action
+        // unless the caller shows them explicitly afterwards.
+        serverInput.visibility = View.GONE
+        secondaryButton.visibility = View.GONE
+        secondaryAction = null
     }
 
     // ── State machine ─────────────────────────────────────────────────
@@ -133,6 +153,10 @@ class MainActivity : AppCompatActivity() {
         val perms = PermissionSequence.snapshot(this)
         if (!perms.allGranted) {
             requestNextMissingPermission(perms)
+            return
+        }
+        if (!storage.serverConfirmed) {
+            showServerScreen()
             return
         }
         if (storage.joinRegistered) {
@@ -167,6 +191,81 @@ class MainActivity : AppCompatActivity() {
             title = "Device removed",
             subtitle = "This device is no longer being tracked."
         )
+    }
+
+    // ── Server address ────────────────────────────────────────────────
+
+    /**
+     * Lets the installer confirm/edit the relay address (the PC's LAN IP
+     * changes with DHCP, so this is runtime-configurable — no rebuild).
+     * Validates with GET /healthz before saving.
+     */
+    private fun showServerScreen() {
+        show(
+            title = "Server address",
+            subtitle = "Enter this PC's address on your Wi-Fi.\nFind it with ipconfig (e.g. 192.168.1.37).",
+            buttonLabel = "Connect & Continue"
+        )
+        serverInput.setText(storage.relayBaseUrl)
+        serverInput.visibility = View.VISIBLE
+        currentAction = { validateAndSaveServer() }
+    }
+
+    private fun validateAndSaveServer() {
+        val raw = serverInput.text.toString()
+        val normalized = normalizeBaseUrl(raw)
+        if (normalized == null) {
+            show(
+                title = "Server address",
+                subtitle = "That doesn't look right.\nUse http://<ip>:8080, e.g. http://192.168.1.37:8080",
+                buttonLabel = "Connect & Continue"
+            )
+            serverInput.setText(raw)
+            serverInput.visibility = View.VISIBLE
+            currentAction = { validateAndSaveServer() }
+            return
+        }
+        show(
+            title = "Connecting...",
+            subtitle = normalized,
+            showSpinner = true
+        )
+        scope.launch {
+            val error = withContext(Dispatchers.IO) {
+                try {
+                    RelayClient { normalized }.checkHealth()
+                    null
+                } catch (e: Exception) {
+                    e
+                }
+            }
+            if (error == null) {
+                storage.relayBaseUrl = normalized
+                storage.serverConfirmed = true
+                // Fresh install: (re)register against the confirmed server.
+                storage.joinRegistered = false
+                onPending()
+            } else {
+                Log.w(tag, "Server validation failed", error)
+                show(
+                    title = "Cannot reach server",
+                    subtitle = "$normalized\n\n${friendlyError(error)}\nCheck the IP and that start.ps1 is running.",
+                    buttonLabel = "Try Again"
+                )
+                serverInput.setText(normalized)
+                serverInput.visibility = View.VISIBLE
+                currentAction = { validateAndSaveServer() }
+            }
+        }
+    }
+
+    /** Returns a normalized "http://host:port" URL or null if unparseable. */
+    private fun normalizeBaseUrl(raw: String): String? {
+        var s = raw.trim().trimEnd('/')
+        if (s.isEmpty()) return null
+        if (!s.contains("://")) s = "http://$s"
+        if (!s.matches(Regex("^https?://[^\\s/:]+(:\\d+)?$"))) return null
+        return s
     }
 
     // ── Permission flow ───────────────────────────────────────────────
@@ -263,15 +362,27 @@ class MainActivity : AppCompatActivity() {
                     buttonLabel = "Try Again"
                 )
                 currentAction = { attemptRegistration() }
+                if (isConnectionError(error)) {
+                    secondaryButton.text = "Change server"
+                    secondaryButton.visibility = View.VISIBLE
+                    secondaryAction = { showServerScreen() }
+                }
             }
         }
+    }
+
+    private fun isConnectionError(e: Throwable): Boolean {
+        val s = e.toString()
+        return "Connection refused" in s || "ECONNREFUSED" in s ||
+            "Unable to resolve host" in s || "timeout" in s.lowercase() ||
+            "Unable to connect" in s || "Failed to connect" in s
     }
 
     private fun friendlyError(e: Throwable): String {
         val s = e.toString()
         return when {
             "Connection refused" in s || "ECONNREFUSED" in s ->
-                "Cannot reach server. Check that the server is running and this device is on the same network."
+                "Cannot reach ${storage.relayBaseUrl}. Check the server is running and this device is on the same Wi-Fi."
             "timeout" in s.lowercase() ->
                 "Server did not respond in time. Try again."
             "Unable to resolve host" in s ->

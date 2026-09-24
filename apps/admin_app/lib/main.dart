@@ -17,6 +17,7 @@ import 'screens/server_setup_screen.dart';
 import 'services/connectivity_monitor.dart';
 import 'services/fcm_service.dart';
 import 'state/devices_controller.dart';
+import 'state/display_controller.dart';
 import 'state/geofences_controller.dart';
 import 'state/hidden_devices_controller.dart';
 import 'state/pending_controller.dart';
@@ -252,6 +253,7 @@ class _ConfiguredAppState extends State<_ConfiguredApp> {
         ChangeNotifierProvider<ThemeController>.value(value: widget.themeController),
         ChangeNotifierProvider(create: (_) => GeofencesController(_traccarApi)),
         ChangeNotifierProvider(create: (_) => HiddenDevicesController()),
+        ChangeNotifierProvider(create: (_) => DisplayController()),
       ],
       child: MaterialApp(
         title: 'Family Tracker Admin',

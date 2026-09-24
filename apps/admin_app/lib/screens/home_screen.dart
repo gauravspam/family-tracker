@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,10 +9,12 @@ import '../api/traccar_api.dart';
 import '../auth/auth_controller.dart';
 import '../services/connectivity_monitor.dart';
 import '../state/devices_controller.dart';
+import '../state/display_controller.dart';
 import '../state/geofences_controller.dart';
 import '../state/hidden_devices_controller.dart';
 import '../state/pending_controller.dart';
 import '../state/theme_controller.dart';
+import '../utils/glass.dart';
 import 'about_screen.dart';
 import 'devices_screen.dart';
 import 'event_log_screen.dart';
@@ -444,7 +445,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
 
     final cm = context.watch<ConnectivityMonitor>();
-    final headerTop = cm.isOnline ? 0.0 : 72.0;
 
     return Scaffold(
       extendBody: true,
@@ -476,21 +476,18 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // ── Connectivity banner ────────────────────────────────────
-          if (!cm.isOnline)
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _ConnectivityBanner(),
-            ),
-
-          // ── Header ────────────────────────────────────────────────
+          // ── Connectivity banner + header ───────────────────────────
+          // Kept in one Column so the header always sits below the banner
+          // regardless of status-bar height or font scale (no hardcoded offset).
           Positioned(
-            top: headerTop,
+            top: 0,
             left: 0,
             right: 0,
-            child: _FloatingHeader(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!cm.isOnline) const _ConnectivityBanner(),
+                _FloatingHeader(
               title: _tabs[_currentTab].label,
               onRefresh: _refresh,
               onTheme: () => _showThemeDialog(context),
@@ -516,6 +513,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   MaterialPageRoute(builder: (_) => const AboutScreen()),
                 );
               },
+              onToggleBlur: () =>
+                  context.read<DisplayController>().toggleGlass(),
               onSignOut: () async {
                 final auth = context.read<AuthController>();
                 final confirm = await showDialog<bool>(
@@ -541,6 +540,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   await auth.logout();
                 }
               },
+                ),
+              ],
             ),
           ),
 
@@ -584,6 +585,7 @@ class _FloatingHeader extends StatelessWidget {
   final VoidCallback onManageHidden;
   final VoidCallback onShowHidden;
   final VoidCallback onAbout;
+  final VoidCallback onToggleBlur;
   final VoidCallback onSignOut;
 
   const _FloatingHeader({
@@ -595,6 +597,7 @@ class _FloatingHeader extends StatelessWidget {
     required this.onManageHidden,
     required this.onShowHidden,
     required this.onAbout,
+    required this.onToggleBlur,
     required this.onSignOut,
   });
 
@@ -603,10 +606,13 @@ class _FloatingHeader extends StatelessWidget {
     final topPadding = MediaQuery.of(context).viewPadding.top;
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glass = context.watch<DisplayController>().glassEnabled;
 
     return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+      child: GlassBlur(
+        enabled: glass,
+        sigmaX: 30,
+        sigmaY: 30,
         child: Container(
           padding: EdgeInsets.only(
             top: topPadding + 8,
@@ -615,7 +621,10 @@ class _FloatingHeader extends StatelessWidget {
             bottom: 12,
           ),
           decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: isDark ? 0.25 : 0.2),
+            // No blur underneath → near-opaque so the title stays legible.
+            color: scheme.surface.withValues(
+              alpha: glass ? (isDark ? 0.25 : 0.2) : 0.97,
+            ),
           ),
           child: Row(
             children: [
@@ -646,6 +655,7 @@ class _FloatingHeader extends StatelessWidget {
                   if (choice == 'manage_hidden') onManageHidden();
                   if (choice == 'show_hidden') onShowHidden();
                   if (choice == 'about') onAbout();
+                  if (choice == 'toggle_blur') onToggleBlur();
                   if (choice == 'signout') onSignOut();
                 },
                 itemBuilder: (_) {
@@ -674,6 +684,11 @@ class _FloatingHeader extends StatelessWidget {
                     const PopupMenuItem(
                       value: 'about',
                       child: Text('About & Server'),
+                    ),
+                    CheckedPopupMenuItem(
+                      value: 'toggle_blur',
+                      checked: glass,
+                      child: const Text('Glass blur'),
                     ),
                     const PopupMenuItem(
                       value: 'signout',
@@ -708,17 +723,20 @@ class _PillNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glass = context.watch<DisplayController>().glassEnabled;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
+      child: GlassBlur(
+        enabled: glass,
+        sigmaX: 60,
+        sigmaY: 60,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           decoration: BoxDecoration(
             color: isDark
-                ? Colors.grey.shade900.withValues(alpha: 0.4)
-                : Colors.white.withValues(alpha: 0.4),
+                ? Colors.grey.shade900.withValues(alpha: glass ? 0.4 : 0.96)
+                : Colors.white.withValues(alpha: glass ? 0.4 : 0.96),
             borderRadius: BorderRadius.circular(28),
             border: Border.all(
               color: isDark

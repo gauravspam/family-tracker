@@ -8,7 +8,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class RelayClient {
+/**
+ * @param baseUrl provider for the relay base URL (e.g. "http://192.168.1.37:8080").
+ * Read via provider so an on-device server-address change applies everywhere
+ * without rebuilding clients.
+ */
+class RelayClient(private val baseUrl: () -> String) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -17,6 +22,16 @@ class RelayClient {
         .build()
 
     private val json = "application/json".toMediaType()
+
+    /** GET /healthz — throws on failure. Used to validate a server address. */
+    fun checkHealth() {
+        val req = Request.Builder().url(baseUrl().trimEnd('/') + "/healthz").get().build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw RuntimeException("Health check failed: HTTP ${resp.code}")
+            }
+        }
+    }
 
     /** POST /join — returns nothing on success, throws on failure. */
     fun submitJoin(
@@ -33,7 +48,7 @@ class RelayClient {
         }
 
         val req = Request.Builder()
-            .url(Config.RELAY_BASE_URL + Config.JOIN_PATH)
+            .url(baseUrl().trimEnd('/') + Config.JOIN_PATH)
             .post(body.toString().toRequestBody(json))
             .build()
 
@@ -46,7 +61,7 @@ class RelayClient {
 
     /** GET /api/device/status?androidId=... */
     fun getDeviceStatus(androidId: String): DeviceStatus {
-        val url = Config.RELAY_BASE_URL + Config.STATUS_PATH + "?androidId=" + androidId
+        val url = baseUrl().trimEnd('/') + Config.STATUS_PATH + "?androidId=" + androidId
         val req = Request.Builder().url(url).get().build()
 
         client.newCall(req).execute().use { resp ->
@@ -74,7 +89,7 @@ class RelayClient {
             put("fcmToken", fcmToken)
         }
         val req = Request.Builder()
-            .url(Config.RELAY_BASE_URL + "/api/device/refresh-fcm")
+            .url(baseUrl().trimEnd('/') + "/api/device/refresh-fcm")
             .post(body.toString().toRequestBody(json))
             .build()
 

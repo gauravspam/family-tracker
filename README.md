@@ -19,11 +19,24 @@ Real-time location tracking for your family. Admin app monitors all devices on a
 - **Activity detection** — Speed-based inference (still/walking/running/vehicle)
 - **Crash reporting** — Rotating crash logs viewable from About screen
 - **Event history** — Complete geofence enter/exit log with device names
+- **Location sharing** — Generate shareable links for temporary location access
+- **Ubuntu deployment** — One-script setup for fresh VPS (Docker, Caddy, Traccar, Relay)
 
 ## Services
 
 - **Traccar** — GPS tracking server (PostgreSQL, port 8082 API, 5055 ingest)
 - **Relay** — Go middleware for approval, live mode, FCM, webhook forwarding
+
+## Quick Start (Ubuntu VPS)
+
+```bash
+# On fresh Ubuntu 22.04/24.04
+git clone https://github.com/gauravspam/family-tracker.git
+cd family-tracker
+sudo ./deploy/setup.sh
+# Edit .env.relay with your FCM credentials and domain
+docker compose -f deploy/docker/docker-compose.yml up -d
+```
 
 ## Screenshots
 

@@ -44,6 +44,17 @@ class Storage(context: Context) {
         get() = prefs.getBoolean(KEY_JOIN_REGISTERED, false)
         set(v) = prefs.edit().putBoolean(KEY_JOIN_REGISTERED, v).apply()
 
+    // ── Server address (editable on-device so DHCP IP changes
+    // don't require a rebuild) ────────────────────────────────
+    var relayBaseUrl: String
+        get() = prefs.getString(KEY_RELAY_BASE_URL, Config.RELAY_BASE_URL)!!
+        set(v) = prefs.edit().putString(KEY_RELAY_BASE_URL, v).apply()
+
+    /** True once the user has confirmed the server address on this install. */
+    var serverConfirmed: Boolean
+        get() = prefs.getBoolean(KEY_SERVER_CONFIRMED, false)
+        set(v) = prefs.edit().putBoolean(KEY_SERVER_CONFIRMED, v).apply()
+
     var ingestUrl: String?
         get() = prefs.getString(KEY_INGEST_URL, null)
         set(v) = prefs.edit().putString(KEY_INGEST_URL, v).apply()
@@ -76,5 +87,7 @@ class Storage(context: Context) {
         private const val KEY_INGEST_TOKEN = "ingest_token"
         private const val KEY_FCM_TOKEN = "fcm_token"
         private const val KEY_FCM_TOKEN_DIRTY = "fcm_token_dirty"
+        private const val KEY_RELAY_BASE_URL = "relay_base_url"
+        private const val KEY_SERVER_CONFIRMED = "server_confirmed"
     }
 }

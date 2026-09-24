@@ -10,14 +10,18 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:tracker_core/tracker_core.dart';
 
+import '../api/traccar_api.dart';
+import '../auth/auth_controller.dart';
 import '../map/motion_estimator.dart';
 import '../appearance/avatar_widget.dart';
 import '../appearance/colors.dart';
 import '../models/device_view.dart';
 import '../services/geocode_service.dart';
 import '../state/devices_controller.dart';
+import '../state/display_controller.dart';
 import '../state/geofences_controller.dart';
 import '../state/hidden_devices_controller.dart';
+import '../utils/glass.dart';
 import 'device_detail_sheet.dart';
 
 class MapScreen extends StatefulWidget {
@@ -123,6 +127,15 @@ class _MapScreenState extends State<MapScreen> with SingleTickerProviderStateMix
       _exitPlacement();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Geofence "$_placeName" created')),
+      );
+    } on TraccarUnauthorized {
+      // Stored JSESSIONID is stale (Traccar restarted or session expired).
+      // Drop it so the app returns to the sign-in screen instead of
+      // dead-ending on every privileged call.
+      await context.read<AuthController>().logout();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session expired — sign in again')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -767,6 +780,7 @@ class _FollowPeekSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glass = context.watch<DisplayController>().glassEnabled;
     final p = device.position;
     final batt = p?.batteryPercent;
 
@@ -776,13 +790,15 @@ class _FollowPeekSheet extends StatelessWidget {
       bottom: bottomPadding,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        child: GlassBlur(
+          enabled: glass,
+          sigmaX: 40,
+          sigmaY: 40,
           child: Container(
             decoration: BoxDecoration(
               color: isDark
-                  ? Colors.grey.shade900.withValues(alpha: 0.3)
-                  : Colors.white.withValues(alpha: 0.25),
+                  ? Colors.grey.shade900.withValues(alpha: glass ? 0.3 : 0.96)
+                  : Colors.white.withValues(alpha: glass ? 0.25 : 0.96),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: isDark

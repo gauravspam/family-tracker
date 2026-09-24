@@ -1,7 +1,10 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-OverlayEntry _buildEntry(BuildContext context, Widget body, VoidCallback onDismiss) {
+import '../state/display_controller.dart';
+import 'glass.dart';
+
+OverlayEntry _buildEntry(BuildContext context, bool glass, Widget body, VoidCallback onDismiss) {
   final topPad = MediaQuery.of(context).padding.top;
   final headerBottom = topPad + 68;
   return OverlayEntry(
@@ -17,8 +20,10 @@ OverlayEntry _buildEntry(BuildContext context, Widget body, VoidCallback onDismi
           onDismissed: (_) => onDismiss(),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+            child: GlassBlur(
+              enabled: glass,
+              sigmaX: 40,
+              sigmaY: 40,
               child: body,
             ),
           ),
@@ -38,14 +43,17 @@ void showGeofenceToast({
   final scheme = Theme.of(context).colorScheme;
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final accent = isEnter ? Colors.green : Colors.red;
+  // Overlay entries don't rebuild on toggles — snapshot the flag.
+  final glass = Provider.of<DisplayController>(context, listen: false).glassEnabled;
 
   late final OverlayEntry entry;
   entry = _buildEntry(
     context,
+    glass,
     Container(
       padding: const EdgeInsets.fromLTRB(0, 14, 18, 14),
       decoration: BoxDecoration(
-        color: scheme.surface.withValues(alpha: isDark ? 0.3 : 0.25),
+        color: scheme.surface.withValues(alpha: glass ? (isDark ? 0.3 : 0.25) : 0.97),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: isDark

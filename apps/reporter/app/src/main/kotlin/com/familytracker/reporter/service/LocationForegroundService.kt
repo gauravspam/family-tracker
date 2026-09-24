@@ -73,7 +73,7 @@ class LocationForegroundService : Service() {
         Log.i(tag, "Service created")
         storage = Storage(this)
         osmand = OsmAndClient()
-        relay = RelayClient()
+        relay = RelayClient { storage.relayBaseUrl }
         positionQueue = PositionQueue(this)
         activityDetector = ActivityDetector()
         createNotificationChannel()

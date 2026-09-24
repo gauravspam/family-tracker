@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +9,8 @@ import '../appearance/colors.dart';
 import '../services/geocode_service.dart';
 import '../models/device_view.dart';
 import '../state/devices_controller.dart';
+import '../state/display_controller.dart';
+import '../utils/glass.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 Future<void> showDeviceDetailSheet(
@@ -391,16 +391,19 @@ class _DeviceDetailSheetState extends State<_DeviceDetailSheet> {
     final p = view.position;
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glass = context.watch<DisplayController>().glassEnabled;
 
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+      child: GlassBlur(
+        enabled: glass,
+        sigmaX: 40,
+        sigmaY: 40,
         child: Container(
           decoration: BoxDecoration(
             color: isDark
-                ? const Color(0xFF1C1C1E).withValues(alpha: 0.75)
-                : Colors.white.withValues(alpha: 0.75),
+                ? const Color(0xFF1C1C1E).withValues(alpha: glass ? 0.75 : 1.0)
+                : Colors.white.withValues(alpha: glass ? 0.75 : 1.0),
           ),
           child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
@@ -646,17 +649,20 @@ class _Card extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glass = context.watch<DisplayController>().glassEnabled;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+      child: GlassBlur(
+        enabled: glass,
+        sigmaX: 40,
+        sigmaY: 40,
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
             color: isDark
-                ? const Color(0xFF1C1C1E).withValues(alpha: 0.25)
-                : Colors.white.withValues(alpha: 0.2),
+                ? const Color(0xFF1C1C1E).withValues(alpha: glass ? 0.25 : 0.95)
+                : Colors.white.withValues(alpha: glass ? 0.2 : 0.95),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isDark

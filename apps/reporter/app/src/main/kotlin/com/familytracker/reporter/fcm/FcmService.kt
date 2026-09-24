@@ -31,7 +31,7 @@ class FcmService : FirebaseMessagingService() {
         if (androidId != null && ingestToken != null) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    RelayClient().refreshFcm(androidId, ingestToken, token)
+                    RelayClient { storage.relayBaseUrl }.refreshFcm(androidId, ingestToken, token)
                     storage.fcmTokenDirty = false
                     Log.i(tag, "FCM token pushed to relay")
                 } catch (e: Exception) {
